@@ -21,10 +21,6 @@ import uuid
 import subprocess
 from docx import Document as DocxDocument
 from pptx import Presentation
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_openai import AzureOpenAIEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain.schema import Document
 from pathlib import Path
 from streamlit.components.v1 import html as components_html
 
@@ -42,127 +38,6 @@ API_VERSION = "2025-03-01-preview"  # gpt-4o-transcribe モデルに対応した
 DEFAULT_RAGDB_FOLDER = ""  # 空文字列の場合はカレントディレクトリ（デフォルト）
 # 例: DEFAULT_RAGDB_FOLDER = "C:/Users/username/Documents/ragdb"
 # 例: DEFAULT_RAGDB_FOLDER = "./data/ragdb"
-
-PROMPTS_DATA = {
-    "rag_proofreading": {
-        "presets": {
-            "standard": {
-                "name": "標準校正",
-                "description": "バランスの取れた標準的な校正",
-                "system_prompt_with_context": ("""
-        あなたは議事録校正の専門家です。以下の関連資料を参照して、議事録を校正してください。
-
-        【参照資料】
-        {context}
-
-        【校正指示】
-        1. 誤字脱字の修正
-        2. 文法の改善
-        3. 専門用語の正確性確認
-        4. 文脈に基づく内容の補完
-        5. 読みやすさの向上
-
-        参照資料を活用しながら、正確で読みやすい議事録に校正してください。
-"""
-               ),
-                "system_prompt_without_context": (
-                    "あなたは議事録校正の専門家です。以下の議事録を校正してください。\n\n"
-                    "【校正指示】\n"
-                    "1. 誤字脱字の修正\n"
-                    "2. 文法の改善\n"
-                    "3. 読みやすさの向上\n\n"
-                    "正確で読みやすい議事録に校正してください。"
-                ),
-            },
-            "detailed": {
-                "name": "詳細校正",
-                "description": "より詳細な分析と改善提案を含む校正",
-                "system_prompt_with_context": (
-                    "あなたは議事録校正の専門家です。以下の関連資料を参照して、議事録を詳細に校正してください。\n\n"
-                    "【参照資料】\n"
-                    "{context}\n\n"
-                    "【詳細校正指示】\n"
-                    "1. 誤字脱字の修正と詳細な説明\n"
-                    "2. 文法の改善と代替表現の提案\n"
-                    "3. 専門用語の正確性確認と定義の補足\n"
-                    "4. 文脈に基づく内容の補完と背景情報の追加\n"
-                    "5. 読みやすさの向上と文章構造の最適化\n"
-                    "6. 曖昧な表現の明確化\n"
-                    "7. 重要なポイントの強調\n\n"
-                    "参照資料を十分に活用し、より詳細で分かりやすい議事録に校正してください。\n"
-                    "必要に応じて、改善点の説明も含めてください。"
-                ),
-                "system_prompt_without_context": (
-                    "あなたは議事録校正の専門家です。以下の議事録を詳細に校正してください。\n\n"
-                    "【詳細校正指示】\n"
-                    "1. 誤字脱字の修正と詳細な説明\n"
-                    "2. 文法の改善と代替表現の提案\n"
-                    "3. 読みやすさの向上と文章構造の最適化\n"
-                    "4. 曖昧な表現の明確化\n"
-                    "5. 重要なポイントの強調\n\n"
-                    "より詳細で分かりやすい議事録に校正してください。"
-                ),
-            },
-            "simple": {
-                "name": "簡潔校正",
-                "description": "必要最小限の修正のみを行う簡潔な校正",
-                "system_prompt_with_context": (
-                    "あなたは議事録校正の専門家です。以下の関連資料を参照して、議事録を簡潔に校正してください。\n\n"
-                    "【参照資料】\n"
-                    "{context}\n\n"
-                    "【簡潔校正指示】\n"
-                    "1. 明らかな誤字脱字のみ修正\n"
-                    "2. 重大な文法エラーのみ修正\n"
-                    "3. 元の文章をできるだけ維持\n\n"
-                    "参照資料を活用しながら、最小限の修正で読みやすい議事録に校正してください。"
-                ),
-                "system_prompt_without_context": (
-                    "あなたは議事録校正の専門家です。以下の議事録を簡潔に校正してください。\n\n"
-                    "【簡潔校正指示】\n"
-                    "1. 明らかな誤字脱字のみ修正\n"
-                    "2. 重大な文法エラーのみ修正\n"
-                    "3. 元の文章をできるだけ維持\n\n"
-                    "最小限の修正で読みやすい議事録に校正してください。"
-                ),
-            },
-            "formal": {
-                "name": "フォーマル校正",
-                "description": "よりフォーマルで丁寧な表現に校正",
-                "system_prompt_with_context": (
-                    "あなたは議事録校正の専門家です。以下の関連資料を参照して、議事録をよりフォーマルな表現に校正してください。\n\n"
-                    "【参照資料】\n"
-                    "{context}\n\n"
-                    "【フォーマル校正指示】\n"
-                    "1. 誤字脱字の修正\n"
-                    "2. 文法の改善\n"
-                    "3. カジュアルな表現をフォーマルな表現に変換\n"
-                    "4. 敬語表現の統一と適切な使用\n"
-                    "5. ビジネス文書として適切な語彙の使用\n"
-                    "6. 専門用語の正確性確認\n\n"
-                    "参照資料を活用しながら、フォーマルで丁寧な印象の議事録に校正してください。"
-                ),
-                "system_prompt_without_context": (
-                    "あなたは議事録校正の専門家です。以下の議事録をよりフォーマルな表現に校正してください。\n\n"
-                    "【フォーマル校正指示】\n"
-                    "1. 誤字脱字の修正\n"
-                    "2. 文法の改善\n"
-                    "3. カジュアルな表現をフォーマルな表現に変換\n"
-                    "4. 敬語表現の統一と適切な使用\n"
-                    "5. ビジネス文書として適切な語彙の使用\n\n"
-                    "フォーマルで丁寧な印象の議事録に校正してください。"
-                ),
-            },
-        },
-    },
-    "legacy": {
-        "initial_transcription_prompt": (
-            "\"こんにちは。\\n\\nはい、こんにちは。\\n\\nお元気ですか？\\n\\nはい、元気です。\\n\\nそれは何よりです。では早速始めましょう。\\n\\nはい、よろしくお願いいたします。\""
-        ),
-        "summarizing_prompt1": (
-            "ユーザーからテキストを渡されます。当該のテキストの内容を読んだ上で、150文字程度の要約を生成してください。"
-        ),
-    },
-}
 
 DEFAULT_MEETING_TYPES = [
     {
@@ -191,64 +66,6 @@ DEFAULT_MEETING_TYPES = [
     },
 ]
 
-
-class _InlinePromptLoader:
-    def __init__(self, data: dict):
-        self._cache = data
-
-    def get_prompt(self, *keys: str) -> str:
-        data = self._cache
-        for key in keys:
-            if not isinstance(data, dict) or key not in data:
-                raise KeyError(f"プロンプトが見つかりません: {' -> '.join(keys)}")
-            data = data[key]
-        if not isinstance(data, str):
-            raise ValueError(f"指定されたキーパスはプロンプト文字列ではありません: {' -> '.join(keys)}")
-        return data
-
-    def get_all_prompts(self) -> dict:
-        return json.loads(json.dumps(self._cache))
-
-    def get_presets(self, category: str) -> dict:
-        category_data = self._cache.get(category, {})
-        return category_data.get("presets", {}) if isinstance(category_data, dict) else {}
-
-    def get_preset_list(self, category: str) -> list:
-        presets = self.get_presets(category)
-        return [
-            {
-                "id": preset_id,
-                "name": preset_data.get("name", preset_id),
-                "description": preset_data.get("description", ""),
-            }
-            for preset_id, preset_data in presets.items()
-        ]
-
-    def get_prompt_from_preset(self, category: str, preset_id: str, prompt_type: str) -> str:
-        presets = self.get_presets(category)
-        if preset_id not in presets:
-            raise KeyError(f"プロンプトプリセットが見つかりません: {category} -> {preset_id}")
-        preset_data = presets[preset_id]
-        if prompt_type not in preset_data:
-            raise KeyError(f"プロンプトタイプが見つかりません: {category} -> {preset_id} -> {prompt_type}")
-        value = preset_data[prompt_type]
-        if not isinstance(value, str):
-            raise ValueError(f"指定されたプリセット値は文字列ではありません: {category} -> {preset_id} -> {prompt_type}")
-        return value
-
-
-_DEFAULT_PROMPT_LOADER: _InlinePromptLoader | None = None
-
-
-def get_default_loader() -> _InlinePromptLoader:
-    global _DEFAULT_PROMPT_LOADER
-    if _DEFAULT_PROMPT_LOADER is None:
-        _DEFAULT_PROMPT_LOADER = _InlinePromptLoader(PROMPTS_DATA)
-    return _DEFAULT_PROMPT_LOADER
-
-
-def get_prompt(*keys: str) -> str:
-    return get_default_loader().get_prompt(*keys)
 
 def _extract_pdf(file: BytesIO) -> str:
     file_bytes = file.read()
@@ -854,14 +671,9 @@ def split_text_by_lines(text, n_parts):
     return result
 
 class RAGProofreadingSystem:
-    """LangChainベースのRAG校正システム"""
+    """RAG機能削除後のダミー校正システム"""
 
-    # 定数定義
-    DEFAULT_CHUNK_SIZE = 500
-    DEFAULT_CHUNK_OVERLAP = 100
-    DEFAULT_TOP_K = 6
     DEFAULT_TEMPERATURE = 0.3
-    EMBEDDING_MODEL = "text-embedding-3-large"
 
     def __init__(self, azure_endpoint, azure_api_key, api_version):
         self.azure_endpoint = azure_endpoint
@@ -872,126 +684,24 @@ class RAGProofreadingSystem:
             api_key=azure_api_key,
             api_version=api_version
         )
-
-        # LangChain embedding 初期化
-        self.embeddings = AzureOpenAIEmbeddings(
-            azure_deployment=self.EMBEDDING_MODEL,
-            openai_api_version=api_version,
-            azure_endpoint=azure_endpoint,
-            api_key=azure_api_key
-        )
-
-        self.vectorstore = None
         self.documents = []
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=self.DEFAULT_CHUNK_SIZE,
-            chunk_overlap=self.DEFAULT_CHUNK_OVERLAP,
-            length_function=len,
-        )
 
     def create_knowledge_base(self, documents_text_list, mode="add", documents_metadata=None):
-        """ナレッジベースを構築（LangChain使用）
-
-        Args:
-            documents_text_list: ドキュメントテキストのリスト
-            mode: "new" (新規作成) または "add" (追加構築)
-            documents_metadata: 各ドキュメントのメタデータ辞書のリスト（オプション）
-        """
-        try:
-            # テキストをLangChain Documentオブジェクトに変換
-            langchain_docs = []
-            for i, text in enumerate(documents_text_list):
-                # メタデータを設定
-                if documents_metadata and i < len(documents_metadata):
-                    # カスタムメタデータを使用
-                    metadata = documents_metadata[i].copy()
-                else:
-                    # デフォルトメタデータ
-                    metadata = {"source": f"document_{i+1}"}
-
-                doc = Document(
-                    page_content=text,
-                    metadata=metadata
-                )
-                langchain_docs.append(doc)
-
-            # テキスト分割
-            split_docs = self.text_splitter.split_documents(langchain_docs)
-
-            # モードに応じて処理
-            if mode == "new" or self.vectorstore is None:
-                # 新規作成（または既存がない場合）
-                self.vectorstore = FAISS.from_documents(split_docs, self.embeddings)
-                self.documents = documents_text_list
-            else:
-                # 追加構築
-                self.vectorstore.add_documents(split_docs)
-                self.documents.extend(documents_text_list)
-
-            return True
-        except Exception as e:
-            st.error(f"ナレッジベース構築エラー: {e}")
-            return False
+        st.info("RAG機能は削除されたため、ナレッジベースは利用できません。")
+        self.documents = []
+        return False
 
     def retrieve_relevant_context(self, query, search_type="similarity", top_k=None):
-        """関連文脈を検索（LangChain使用）"""
-        if not self.vectorstore:
-            return ""
-
-        if top_k is None:
-            top_k = self.DEFAULT_TOP_K
-
-        try:
-            if search_type == "similarity":
-                # 類似度検索
-                docs = self.vectorstore.similarity_search(query, k=top_k)
-            elif search_type == "mmr":
-                # MMR検索（多様性を考慮）
-                docs = self.vectorstore.max_marginal_relevance_search(query, k=top_k)
-            else:
-                docs = self.vectorstore.similarity_search(query, k=top_k)
-
-            # 検索結果を結合
-            context = "\n\n".join([doc.page_content for doc in docs])
-            return context
-        except Exception as e:
-            st.error(f"文脈検索エラー: {e}")
-            return ""
+        return ""
 
     def rag_enhanced_proofread(self, text, model="gpt-4o", search_type="similarity", top_k=None, prompt_preset="standard"):
-        """
-        RAG拡張校正（LangChain使用）
-
-        Args:
-            text: 校正対象のテキスト
-            model: 使用するモデル
-            search_type: 検索タイプ
-            top_k: 検索結果の上位K件
-            prompt_preset: プロンプトプリセットID（例: 'standard', 'detailed', 'simple', 'formal'）
-        """
+        """RAGなしの簡易校正を実行"""
         try:
-            if top_k is None:
-                top_k = self.DEFAULT_TOP_K
-
-            # 関連文脈を検索
-            relevant_context = self.retrieve_relevant_context(text, search_type=search_type, top_k=top_k)
-
-            # プロンプト構築（外部ファイルから読み込み）
-            loader = get_default_loader()
-            if relevant_context:
-                system_prompt = loader.get_prompt_from_preset(
-                    "rag_proofreading",
-                    prompt_preset,
-                    "system_prompt_with_context"
-                ).format(context=relevant_context)
-            else:
-                system_prompt = loader.get_prompt_from_preset(
-                    "rag_proofreading",
-                    prompt_preset,
-                    "system_prompt_without_context"
-                )
-
-            # Azure OpenAI APIで校正実行
+            system_prompt = (
+                "あなたは議事録校正の専門家です。関連資料を用いずに、入力された議事録を基本的に校正してください。"
+                "主に誤字脱字と明確さの改善に集中してください。"
+            )
+            st.info("RAG機能は削除されたため、外部文脈を参照しない簡易校正を実行します。")
             response = self.client.chat.completions.create(
                 model=model,
                 messages=[
@@ -1000,131 +710,32 @@ class RAGProofreadingSystem:
                 ],
                 temperature=self.DEFAULT_TEMPERATURE,
             )
-
             return response.choices[0].message.content
-
         except Exception as e:
             st.error(f"校正実行エラー: {e}")
             return None
 
     def save_knowledge_base(self, output_path):
-        """ナレッジベースを保存（LangChain FAISS使用）"""
-        try:
-            if not self.vectorstore:
-                return False, "保存するナレッジベースがありません"
-
-            # 一時ディレクトリを作成
-            with tempfile.TemporaryDirectory() as tmpdir:
-                # FAISSインデックスを保存
-                faiss_path = os.path.join(tmpdir, "faiss_index")
-                self.vectorstore.save_local(faiss_path)
-
-                # メタデータを保存
-                metadata = {
-                    "documents_count": len(self.documents),
-                    "timestamp": datetime.now().isoformat()
-                }
-                metadata_path = os.path.join(tmpdir, "metadata.json")
-                with open(metadata_path, "w", encoding="utf-8") as f:
-                    json.dump(metadata, f, ensure_ascii=False, indent=2)
-
-                # ZIPファイルに圧縮
-                with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                    # FAISSファイルを追加
-                    for root, dirs, files in os.walk(faiss_path):
-                        for file in files:
-                            file_path = os.path.join(root, file)
-                            arcname = os.path.join("faiss_index", file)
-                            zipf.write(file_path, arcname)
-
-                    # メタデータを追加
-                    zipf.write(metadata_path, "metadata.json")
-
-            return True, "保存成功"
-
-        except Exception as e:
-            return False, f"保存エラー: {e}"
+        return False, "RAG機能削除により保存できません"
 
     def load_knowledge_base(self, input_path):
-        """ナレッジベースを読み込み（LangChain FAISS使用）"""
-        try:
-            # 一時ディレクトリを作成
-            with tempfile.TemporaryDirectory() as tmpdir:
-                # ZIPファイルを展開
-                with zipfile.ZipFile(input_path, 'r') as zipf:
-                    zipf.extractall(tmpdir)
-
-                # FAISSインデックスを読み込み
-                faiss_path = os.path.join(tmpdir, "faiss_index")
-                self.vectorstore = FAISS.load_local(
-                    faiss_path,
-                    self.embeddings,
-                    allow_dangerous_deserialization=True
-                )
-
-                # メタデータを読み込み
-                metadata_path = os.path.join(tmpdir, "metadata.json")
-                if os.path.exists(metadata_path):
-                    with open(metadata_path, "r", encoding="utf-8") as f:
-                        metadata = json.load(f)
-                else:
-                    metadata = {}
-
-            return True, "読み込み成功", metadata
-
-        except Exception as e:
-            return False, f"読み込みエラー: {e}", {}
+        return False, "RAG機能削除により読み込めません", {}
 
     def get_database_info(self):
-        """データベース情報を取得"""
-        has_data = self.vectorstore is not None
         return {
-            "has_data": has_data,
-            "documents_count": len(self.documents),
-            "is_indexed": has_data,
-            "total_chunks": self.vectorstore.index.ntotal if has_data else 0,
-            "vector_files": 1 if has_data else 0,
-            "output_files": 1 if has_data else 0,
-            "search_types": ["similarity", "mmr"] if has_data else []
+            "has_data": False,
+            "documents_count": 0,
+            "is_indexed": False,
+            "total_chunks": 0,
+            "vector_files": 0,
+            "output_files": 0,
+            "search_types": []
         }
 
     def get_chunks_detail(self):
-        """チャンクの詳細情報を取得
-
-        Returns:
-            list: チャンク情報のリスト（各要素は辞書）
-        """
-        if not self.vectorstore:
-            return []
-
-        try:
-            chunks_info = []
-            # FAISSのdocstoreから全ドキュメントを取得
-            docstore = self.vectorstore.docstore
-            index_to_docstore_id = self.vectorstore.index_to_docstore_id
-
-            for i in range(self.vectorstore.index.ntotal):
-                doc_id = index_to_docstore_id[i]
-                doc = docstore.search(doc_id)
-
-                if doc:
-                    chunks_info.append({
-                        "chunk_id": i,
-                        "doc_id": doc_id,
-                        "content": doc.page_content,
-                        "content_length": len(doc.page_content),
-                        "source": doc.metadata.get("source", "不明"),
-                        "metadata": doc.metadata
-                    })
-
-            return chunks_info
-        except Exception as e:
-            st.error(f"チャンク詳細取得エラー: {e}")
-            return []
+        return []
 
     def clear_knowledge_base(self):
-        """ナレッジベースをクリア"""
-        self.vectorstore = None
         self.documents = []
 
 # ========================================
@@ -1277,607 +888,33 @@ def _render_database_operations(rag_system, key_prefix="", show_save=True):
 
 def knowledge_base_management():
     st.title("📚 ナレッジベース管理")
-    st.write("議事録校正用のナレッジベースを構築・管理します。")
+    st.write("RAG機能の削除に伴い、ナレッジベース管理機能は利用できません。")
+    st.info("既存のRAGデータベース操作は無効化されています。")
 
-    st.sidebar.markdown("""
-    ### 📚 ナレッジベース管理
-
-    **概要**
-    LangChainとFAISSを使用した高度なRAGシステムです。
-
-    **主な機能**
-    - ドキュメント追加: PDF、Word、PowerPoint対応
-    - ベクトル検索: 高速セマンティック検索
-    - DB保存: .ragdb形式で保存・読み込み
-    - 検索タイプ: similarity、mmr対応
-
-    💡 ドキュメント追加で既存データと自動マージ
-    """)
-
-    # RAGシステムの初期化
-    rag_system = _init_rag_system()
-
-    # デフォルトのRAGDBファイルを自動読み込み（初回のみ）
-    if 'kb_default_db_loaded' not in st.session_state:
-        default_ragdb_path = get_default_ragdb_path()
-        if os.path.exists(default_ragdb_path):
-            try:
-                success, message, metadata = rag_system.load_knowledge_base(default_ragdb_path)
-                if success:
-                    st.success(f"✅ デフォルトナレッジベース '{default_ragdb_path}' を自動読み込みしました")
-                    st.session_state.global_db_info = rag_system.get_database_info()
-                else:
-                    st.warning(f"⚠️ デフォルトナレッジベースの読み込みに失敗しました: {message}")
-            except Exception as e:
-                st.warning(f"⚠️ デフォルトナレッジベースの読み込みに失敗しました: {e}")
-        st.session_state.kb_default_db_loaded = True
-
-    # ナレッジベース状態表示
-    st.subheader("📊 現在の状態")
-    _render_database_status(st.session_state.global_db_info)
-
-    # データベース操作
-    _render_database_operations(rag_system, key_prefix="kb", show_save=True)
-
-    # ナレッジベース詳細表示
-    if st.session_state.global_db_info.get("has_data", False):
-        with st.expander("🔍 ナレッジベース詳細", expanded=False):
-            # チャンク詳細を取得
-            chunks_detail = rag_system.get_chunks_detail()
-
-            if chunks_detail:
-                # フィルタリングオプション
-                filter_col1, filter_col2 = st.columns([2, 1])
-                with filter_col1:
-                    search_text = st.text_input(
-                        "🔎 チャンク内容で検索",
-                        key="chunk_search",
-                        placeholder="検索キーワードを入力..."
-                    )
-                with filter_col2:
-                    unique_sources = sorted(set(chunk["source"] for chunk in chunks_detail))
-                    selected_source = st.selectbox(
-                        "📁 ソースでフィルタ",
-                        options=["すべて"] + unique_sources,
-                        key="chunk_source_filter"
-                    )
-
-                # フィルタリング適用
-                filtered_chunks = chunks_detail
-                if search_text:
-                    filtered_chunks = [
-                        chunk for chunk in filtered_chunks
-                        if search_text.lower() in chunk["content"].lower()
-                    ]
-                if selected_source != "すべて":
-                    filtered_chunks = [
-                        chunk for chunk in filtered_chunks
-                        if chunk["source"] == selected_source
-                    ]
-
-                st.caption(f"表示中: {len(filtered_chunks)} / {len(chunks_detail)} チャンク")
-
-                # データフレーム形式で表示
-                if filtered_chunks:
-                    display_data = []
-                    for chunk in filtered_chunks:
-                        # メタデータから情報を取得
-                        metadata = chunk["metadata"]
-                        upload_datetime = metadata.get("upload_datetime", "-")
-                        file_type = metadata.get("file_type", "-")
-
-                        # コンテンツを適度に表示
-                        content_preview = chunk["content"][:200] + "..." if len(chunk["content"]) > 200 else chunk["content"]
-
-                        display_data.append({
-                            "ソース": chunk["source"],
-                            "投入日時": upload_datetime,
-                            "形式": file_type,
-                            "文字数": chunk["content_length"],
-                            "内容": content_preview
-                        })
-
-                    # テーブル表示
-                    st.dataframe(
-                        display_data,
-                        use_container_width=True,
-                        hide_index=True,
-                        height=400
-                    )
-                else:
-                    st.warning("フィルタ条件に一致するチャンクがありません。")
-            else:
-                st.warning("チャンク情報を取得できませんでした。")
-
-    # ナレッジベース構築
-    st.subheader("🏗️ ナレッジベース構築")
-
-    # 構築モード選択
-    build_mode = st.radio(
-        "構築モードを選択してください",
-        options=["追加構築", "新規構築"],
-        index=0,  # デフォルト: 追加構築
-        horizontal=True,
-        help="追加構築: 既存のナレッジベースに追加 | 新規構築: 既存を削除して新規作成"
-    )
-
-    # ドキュメントアップロード
-    doc_files = st.file_uploader(
-        "ドキュメントファイルを選択してください（複数選択可）",
-        type=["pdf", "txt", "docx", "pptx"],
-        accept_multiple_files=True,
-        key="kb_doc_files",
-        help="選択したファイルからナレッジベースを構築します"
-    )
-
-    if doc_files and st.button("🚀 ナレッジベースを構築", key="kb_build_btn", type="primary"):
-        try:
-            from datetime import datetime
-
-            documents = []
-            documents_metadata = []
-            processed_files = []
-            upload_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            with st.spinner("ドキュメントを処理中..."):
-                for doc_file in doc_files:
-                    try:
-                        file_extension = doc_file.name.split(".")[-1].lower()
-                        doc_content = extract_text_from_file(BytesIO(doc_file.read()), file_extension)
-
-                        if doc_content.strip():
-                            documents.append(doc_content)
-                            # メタデータを追加
-                            documents_metadata.append({
-                                'source': doc_file.name,  # ファイル名をソースとして保存
-                                'upload_datetime': upload_datetime,  # 投入日時
-                                'file_type': file_extension.upper(),
-                                'content_length': len(doc_content)
-                            })
-                            processed_files.append({
-                                'name': doc_file.name,
-                                'type': file_extension.upper(),
-                                'size': len(doc_content),
-                                'status': 'success'
-                            })
-                            st.success(f"✅ {doc_file.name} ({file_extension.upper()}) - {len(doc_content):,}文字")
-                        else:
-                            processed_files.append({
-                                'name': doc_file.name,
-                                'type': file_extension.upper(),
-                                'size': 0,
-                                'status': 'empty'
-                            })
-                            st.warning(f"⚠️ {doc_file.name} - テキストが抽出できませんでした")
-                    except Exception as e:
-                        processed_files.append({
-                            'name': doc_file.name,
-                            'type': 'ERROR',
-                            'size': 0,
-                            'status': 'error',
-                            'error': str(e)
-                        })
-                        st.error(f"❌ {doc_file.name} の処理に失敗: {e}")
-
-            if documents:
-                with st.spinner("ナレッジベースを構築中..."):
-                    # 構築モードを変換
-                    mode = "add" if build_mode == "追加構築" else "new"
-
-                    # ナレッジベース構築
-                    if mode == "new":
-                        st.info("既存データを削除して新規構築します")
-                    else:
-                        st.info("既存データに追加構築します")
-
-                    success = st.session_state.global_rag_system.create_knowledge_base(
-                        documents,
-                        mode=mode,
-                        documents_metadata=documents_metadata
-                    )
-
-                    if success:
-                        st.session_state.global_db_info = st.session_state.global_rag_system.get_database_info()
-                    else:
-                        raise Exception("ベクターストア構築に失敗しました")
-
-                    # 構築結果表示
-                    st.success(f"✅ ナレッジベースの構築が完了しました！")
-
-                    # 詳細統計
-                    with st.expander("📈 構築結果詳細"):
-                        new_total_chars = sum(len(doc) for doc in documents)
-                        st.metric("新規追加文字数", f"{new_total_chars:,}")
-                        st.metric("ドキュメント数", st.session_state.global_db_info['documents_count'])
-                        st.metric("ベクターファイル数", st.session_state.global_db_info.get('vector_files', 0))
-                        st.metric("検索タイプ数", len(st.session_state.global_db_info.get('search_types', [])))
-
-                        # 利用可能な検索タイプを表示
-                        search_types = st.session_state.global_db_info.get('search_types', [])
-                        if search_types:
-                            st.write(f"**利用可能な検索タイプ**: {', '.join(search_types)}")
-
-                        # ファイル処理結果テーブル
-                        st.write("**ファイル処理結果**")
-                        for file_info in processed_files:
-                            status_icon = {
-                                'success': '✅',
-                                'empty': '⚠️',
-                                'error': '❌'
-                            }.get(file_info['status'], '❓')
-
-                            st.write(f"{status_icon} **{file_info['name']}** ({file_info['type']}) - {file_info['size']:,}文字")
-
-                    st.rerun()
-            else:
-                st.error("処理可能なドキュメントがありませんでした。")
-
-        except Exception as e:
-            st.error(f"ナレッジベース構築中にエラーが発生しました: {e}")
 
 def proofread_meeting_minutes():
-    st.title("📝 議事録校正")
-    st.write("ナレッジベースを活用した高精度な議事録校正を行います。")
+    st.title("📝 議事録校正（RAG）")
+    st.write("RAG機能は削除されたため、このセクションは利用できません。")
+    st.info("校正が必要な場合は、文字起こし結果を手動で編集するか、今後追加される代替機能をご利用ください。")
 
-    st.sidebar.markdown("""
-    ### 📝 議事録校正システム
-
-    **概要**
-    ナレッジベースを活用した高精度な議事録校正を提供します。
-
-    **システムの特徴**
-    - 類似度検索: セマンティック検索
-    - チャンク分割: 最適サイズで処理
-    - 高速検索: 効率的ベクトル検索
-    - シンプル設計: 保守しやすい構成
-
-    **使用手順**
-    1. ナレッジベースを確認
-    2. 議事録テキストを入力
-    3. 検索タイプを選択
-    4. 校正を実行
-
-    💡 未構築の場合は「ナレッジベース管理」から
-    """)
-
-    # RAGシステムの初期化
-    rag_system = _init_rag_system()
-
-    # デフォルトのRAGDBファイルを自動読み込み（初回のみ）
-    if 'default_db_loaded' not in st.session_state:
-        default_ragdb_path = get_default_ragdb_path()
-        if os.path.exists(default_ragdb_path):
-            try:
-                success, message, metadata = rag_system.load_knowledge_base(default_ragdb_path)
-                if success:
-                    st.success(f"✅ デフォルトナレッジベース '{default_ragdb_path}' を自動読み込みしました")
-                    st.session_state.global_db_info = rag_system.get_database_info()
-                else:
-                    st.warning(f"⚠️ デフォルトナレッジベースの読み込みに失敗しました: {message}")
-            except Exception as e:
-                st.warning(f"⚠️ デフォルトナレッジベースの読み込みに失敗しました: {e}")
-        st.session_state.default_db_loaded = True
-
-    # ナレッジベース状態表示
-    st.subheader("📚 ナレッジベース状態")
-    db_status = st.session_state.global_db_info
-    _render_database_status(db_status, show_output_files=True)
-
-    has_data = db_status.get('has_data', False)
-    if not has_data:
-        st.warning("⚠️ ナレッジベースが構築されていません。「ナレッジベース管理」で事前に構築してください。")
-        st.info("📖 ナレッジベースなしでも基本的な校正は実行できますが、高度な文脈参照機能は利用できません。")
-
-    # データベース操作
-    with st.expander("🔧 データベース操作"):
-        _render_database_operations(rag_system, key_prefix="proofreading", show_save=False)
-
-    # 検索結果数の設定
-    top_k = st.selectbox(
-        "検索する関連文脈の数",
-        options=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        index=5,  # デフォルト: 6
-        help="より多くの文脈を検索すると精度が向上しますが、処理時間が増加します"
-    )
-
-    # テキスト入力方法の選択
-    input_method = st.radio(
-        "議事録テキストの入力方法を選択してください",
-        ["テキストファイル(.txt/.docx)をアップロード", "テキストボックスに直接入力"],
-        key="rag_input_method_selector"
-    )
-
-    transcript_text = ""
-
-    if input_method == "テキストファイル(.txt/.docx)をアップロード":
-        uploaded_text_file = st.file_uploader(
-            "議事録テキストファイルを選択してください",
-            type=["txt", "docx"],
-            key="rag_upload_text_file"
-        )
-
-        if uploaded_text_file is not None:
-            try:
-                file_extension = uploaded_text_file.name.lower().split('.')[-1]
-
-                if file_extension == 'txt':
-                    transcript_text = uploaded_text_file.read().decode('utf-8')
-                elif file_extension == 'docx':
-                    # Word文書からテキストを抽出
-                    transcript_text = get_text_from_docx(BytesIO(uploaded_text_file.read()))
-
-                st.success(f"{file_extension.upper()}ファイルが正常に読み込まれました。")
-                st.text_area("読み込まれたテキスト（プレビュー）",
-                           transcript_text[:500] + "..." if len(transcript_text) > 500 else transcript_text,
-                           height=150, key="rag_text_preview")
-            except Exception as e:
-                st.error(f"テキストファイルの読み込み中にエラーが発生しました: {e}")
-
-    else:  # テキストボックスに直接入力
-        transcript_text = st.text_area(
-            "議事録テキストを入力してください",
-            height=300,
-            key="rag_direct_text_input",
-            placeholder="ここに議事録テキストを貼り付けてください..."
-        )
-
-    # 校正設定
-    st.subheader("🎛️ LangChain校正設定")
-
-    config_col1, config_col2 = st.columns(2)
-
-    with config_col1:
-        # 検索タイプ選択
-        search_types = st.session_state.global_db_info.get('search_types', [])
-        if search_types:
-            search_type = st.selectbox(
-                "検索タイプ",
-                search_types,
-                key="search_type_selection",
-                help="similarity: ベクトル類似度検索、mmr: 多様性を考慮した検索"
-            )
-
-            if search_type == 'similarity':
-                st.info("🎯 **類似度検索**: ベクトル類似度による最も関連性の高い文書検索")
-            elif search_type == 'mmr':
-                st.info("🔄 **MMR検索**: 関連性と多様性を両立した文書検索")
-        else:
-            search_type = "similarity"
-            st.warning("ベクターストアが初期化されていません。デフォルトで類似度検索を使用します。")
-
-    with config_col2:
-        # 校正モデル選択
-        model_choice = st.selectbox(
-            "LLMモデル",
-            ["gpt-4o", "gpt-4o-mini"],
-            key="proofreading_model",
-            help="校正に使用するAIモデルを選択"
-        )
-
-    # プロンプトプリセット選択
-    st.markdown("### 🎨 プロンプトプリセット")
-
-    # プロンプトプリセット一覧を取得
-    loader = get_default_loader()
-    presets = loader.get_preset_list("rag_proofreading")
-
-    if presets:
-        # プリセットの選択肢を作成
-        preset_options = {f"{p['name']} - {p['description']}": p['id'] for p in presets}
-
-        # セレクトボックスで表示
-        selected_preset_label = st.selectbox(
-            "校正プロンプトを選択",
-            options=list(preset_options.keys()),
-            index=0,  # デフォルトは最初のプリセット（standard）
-            key="prompt_preset_selection",
-            help="校正の方針を選択してください"
-        )
-
-        # 選択されたプリセットのIDを取得
-        selected_preset = preset_options[selected_preset_label]
-
-        # 選択されたプリセットの詳細を表示
-        selected_preset_info = next((p for p in presets if p['id'] == selected_preset), None)
-        if selected_preset_info:
-            st.info(f"📝 **{selected_preset_info['name']}**: {selected_preset_info['description']}")
-    else:
-        selected_preset = "standard"
-        st.warning("プロンプトプリセットが見つかりません。デフォルトプリセットを使用します。")
-    ##2025.9.8 修正：分割処理の追加
-    # 分割処理設定の追加
-    st.subheader("📏 テキスト分割設定")
-
-    split_col1, split_col2 = st.columns(2)
-
-    with split_col1:
-        n_length = st.number_input(
-            "分割閾値 (文字数)",
-            min_value=100,
-            max_value=10000,
-            value=1000,
-            step=100,
-            key="text_split_threshold",
-            help="この文字数を超える場合、テキストを分割して処理します"
-        )
-
-    with split_col2:
-        if transcript_text.strip():
-            current_length = len(transcript_text)
-            estimated_parts = max(1, (current_length // n_length) + (1 if current_length % n_length > 0 else 0))
-            st.metric("現在のテキスト長", f"{current_length:,}文字")
-            st.metric("推定分割数", f"{estimated_parts}部分")
-
-    # LangChain校正実行
-    if transcript_text.strip() and st.button("📝 RAG校正を実行", key="execute_rag_proofreading", type="primary"):
-        if not transcript_text.strip():
-            st.error("議事録テキストが入力されていません。")
-            return
-
-        try:
-            ##2025.9.8 修正：分割処理の追加
-            # テキストの分割判定と処理
-            current_length = len(transcript_text)
-
-            if current_length > n_length:
-                # 分割が必要な場合
-                n_parts = max(1, (current_length // n_length) + (1 if current_length % n_length > 0 else 0))
-                st.info(f"📏 テキストが長いため、{n_parts}部分に分割して処理します（閾値: {n_length:,}文字、実際: {current_length:,}文字）")
-
-                # テキストを分割
-                text_parts = split_text_by_lines(transcript_text, n_parts)
-
-                # 各パートを順次処理
-                proofread_parts = []
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-
-                with st.spinner(f"LangChainベース校正を実行中（分割処理: {n_parts}部分）..."):
-                    current_db_status = st.session_state.global_rag_system.get_database_info()
-                    if current_db_status['has_data']:
-                        st.info(f"🔍 RAGナレッジベース使用中（文書数: {current_db_status['documents_count']}, 検索タイプ: {search_type}）")
-                    else:
-                        st.info("📖 RAGナレッジベースなしで基本校正を実行します")
-
-                    for i, part in enumerate(text_parts, 1):
-                        print("文字列:", part)
-                        if part.strip():  # 空のパートはスキップ
-                            status_text.text(f"Part {i}/{n_parts} を処理中... ({len(part)}文字)")
-
-                            # 各パートを校正
-                            part_result = st.session_state.global_rag_system.rag_enhanced_proofread(
-                                part,
-                                model=model_choice,
-                                search_type=search_type if current_db_status['has_data'] else "similarity",
-                                top_k=top_k,
-                                prompt_preset=selected_preset
-                            )
-
-                            if part_result:
-                                proofread_parts.append(part_result)
-
-                        progress_bar.progress(i / n_parts)
-
-                    # 結果を連結
-                    proofread_result = "\n\n".join(proofread_parts) if proofread_parts else ""
-                    status_text.empty()
-                    progress_bar.empty()
-
-            else:
-                # 分割不要な場合（従来の処理）
-                with st.spinner(f"LangChainベース校正を実行中 ({search_type}検索使用)..."):
-                    # 現在のLangChain RAGナレッジベース状況を表示
-                    current_db_status = st.session_state.global_rag_system.get_database_info()
-                    if current_db_status['has_data']:
-                        st.info(f"🔍 RAGナレッジベース使用中（文書数: {current_db_status['documents_count']}, 検索タイプ: {search_type}）")
-                    else:
-                        st.info("📖 RAGナレッジベースなしで基本校正を実行します")
-
-                    # LangChain校正の実行
-                    proofread_result = st.session_state.global_rag_system.rag_enhanced_proofread(
-                        transcript_text,
-                        model=model_choice,
-                        search_type=search_type if current_db_status['has_data'] else "similarity",
-                        top_k=top_k,
-                        prompt_preset=selected_preset
-                    )
-
-                if proofread_result:
-                    st.success(f"✅ RAG校正が完了しました！ ({search_type}検索使用)")
-
-                    # 結果表示
-                    st.subheader("📄 校正結果")
-                    st.text_area("校正された議事録", proofread_result, height=400, key="final_rag_result")
-
-                    # 使用されたLangChain RAG文脈の表示
-                    if current_db_status['has_data']:
-                        with st.expander(f"🔍 RAG検索結果 ({search_type}検索)"):
-                            relevant_context = st.session_state.global_rag_system.retrieve_relevant_context(
-                                transcript_text,
-                                search_type=search_type,
-                                top_k=top_k
-                            )
-                            if relevant_context:
-                                st.text_area("RAG検索結果", relevant_context, height=200, key="final_context_display")
-
-                                # 検索タイプの詳細説明
-                                if search_type == 'similarity':
-                                    st.info("🎯 類似度検索: ベクトル類似度による関連文書から情報を抽出")
-                                elif search_type == 'mmr':
-                                    st.info("🔄 MMR検索: 関連性と多様性を考慮した文書から文脈を取得")
-                            else:
-                                st.write("関連文脈が見つかりませんでした。")
-
-                    # ダウンロードと統計
-                    col_dl, col_stats = st.columns([1, 1])
-
-                    with col_dl:
-                        # Word文書として保存
-                        doc = DocxDocument()
-                        doc.add_heading('RAG校正済み議事録', 0)
-
-                        # テキストを段落に分割して追加
-                        for line in proofread_result.split('\n'):
-                            if line.strip():
-                                doc.add_paragraph(line)
-                            else:
-                                doc.add_paragraph('')  # 空行を保持
-
-                        docx_buffer = BytesIO()
-                        doc.save(docx_buffer)
-                        docx_buffer.seek(0)
-
-                        st.download_button(
-                            label="📥 RAG校正済み議事録をダウンロード",
-                            data=docx_buffer.getvalue(),
-                            file_name=f"rag_proofread_{search_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx",
-                            mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                            key="download_final_rag_result"
-                        )
-
-                    with col_stats:
-                        # 統計情報の表示
-                        with st.expander("📊 校正統計"):
-                            original_length = len(transcript_text)
-                            proofread_length = len(proofread_result)
-                            change_ratio = ((proofread_length - original_length) / original_length * 100) if original_length > 0 else 0
-
-                            st.metric("元の文字数", f"{original_length:,}")
-                            st.metric("校正後文字数", f"{proofread_length:,}")
-                            st.metric("変化率", f"{change_ratio:.1f}%")
-
-                            if current_db_status['has_data']:
-                                st.metric("参照チャンク数", current_db_status['total_chunks'])
-                                st.metric("検索範囲", f"上位{top_k}件")
-
-                else:
-                    st.error("❌ 校正処理に失敗しました。Azure OpenAIの設定を確認してください。")
-
-        except Exception as e:
-            st.error(f"❌ RAG校正処理中にエラーが発生しました: {e}")
-            st.info("💡 Azure OpenAIの設定とネットワーク接続を確認してください。")
-
-    elif not transcript_text.strip():
-        st.info("💭 議事録テキストを入力してからRAG校正ボタンを押してください。")
 
 def batch_processing_pipeline():
     """一括処理パイプライン: 1本のメディアから複数セグメントを段階的に処理"""
     st.title("🚀 一括処理パイプライン")
-    st.write("アップロードした動画/音声ファイルを区間ごとに切り出し、文字起こしから校正までをまとめて実行します。")
-    st.write("文字起こし → 個別話者識別 → RAG校正 → 出力のパイプラインを順番に進めるだけで完了します。")
+    st.write("アップロードした動画/音声ファイルを区間ごとに切り出し、文字起こしから話者識別までをまとめて実行します。")
+    st.write("文字起こし → 個別話者識別 → 出力のパイプラインを順番に進めるだけで完了します。")
 
     st.sidebar.markdown("""
     ### 🚀 一括処理パイプライン
 
     **概要**
-    動画・音声ファイルから必要な区間を切り出し、一括で文字起こし・話者識別・RAG校正を実行します。
+    動画・音声ファイルから必要な区間を切り出し、一括で文字起こし・話者識別を実行します。
 
     **処理フロー**
     1. メディアファイルのアップロードと区間設定
     2. モデル選択と文字起こし実行
     3. 各ファイルごとの話者識別（個別設定可能）
-    4. RAG校正実行
-    5. 処理結果の確認とダウンロード
+    4. 処理結果の確認とダウンロード
 
     **対応形式:** MP4, MOV, AVI, MKV, WebM, MP3, WAV, M4A等
     """)
@@ -2301,7 +1338,7 @@ def batch_processing_pipeline():
                                     status_entry['rag_proofread'] = 'pending'
                                     st.session_state.batch_processing_status[selected_file_name] = status_entry
 
-                                    st.success("✏️ 話者列の変更を保存しました。再度話者識別やRAG校正を実行してください。")
+                                    st.success("✏️ 話者列の変更を保存しました。必要に応じて話者識別を再実行してください。")
                             else:
                                 st.dataframe(transcription_df.head(10), use_container_width=True)
 
@@ -2380,7 +1417,7 @@ def batch_processing_pipeline():
                             if 'identified_df' in result and not result['identified_df'].empty:
                                 st.divider()
                                 st.write("**話者識別結果の手動修正**")
-                                st.caption("話者列を直接編集してラベルを調整できます。修正後はRAG校正やエクスポートを再実行してください。")
+                                st.caption("話者列を直接編集してラベルを調整できます。修正後は必要に応じて再度エクスポートを実行してください。")
 
                                 current_identified_df = result['identified_df'].copy()
                                 if 'speaker' not in current_identified_df.columns:
@@ -2631,189 +1668,19 @@ def batch_processing_pipeline():
         st.divider()
 
         # 次のステップへ
-        if st.button("➡️ RAG校正へ進む", key="proceed_to_rag", type="primary"):
+        if st.button("➡️ 次のステップへ進む", key="proceed_to_rag", type="primary"):
             st.session_state.batch_current_step = 4
             st.rerun()
 
-    # Step 4: RAG校正
+    # Step 4: 校正（RAGなし）
     if st.session_state.batch_current_step >= 4:
-        st.subheader("Step 4: RAG校正")
-        st.write("全ファイルの文字起こし結果（または話者識別結果）に対してRAG校正を実行できます。")
+        st.subheader("Step 4: 校正")
+        st.write("RAG機能は削除されたため、このステップでは自動校正をスキップします。")
+        st.session_state.batch_processing_status = {name: {**status, 'rag_proofread': 'skipped'} for name, status in st.session_state.batch_processing_status.items()}
+        if st.button("➡️ 最終確認へ進む", key="skip_rag_step", type="primary"):
+            st.session_state.batch_current_step = 5
+            st.rerun()
 
-        # RAG校正設定
-        col1, col2 = st.columns(2)
-
-        with col1:
-            # RAGシステムの初期化
-            if st.session_state.batch_rag_system is None:
-                st.session_state.batch_rag_system = _init_rag_system()
-
-            rag_system = st.session_state.batch_rag_system
-
-            # ナレッジベース読み込み
-            st.write("**ナレッジベース設定**")
-
-            # デフォルトDBの自動読み込み
-            default_ragdb_path = get_default_ragdb_path()
-            if os.path.exists(default_ragdb_path) and rag_system.vectorstore is None:
-                with st.spinner("デフォルトナレッジベースを読み込み中..."):
-                    try:
-                        rag_system.load_knowledge_base(str(default_ragdb_path))
-                        # データベース情報を更新
-                        st.session_state.batch_db_info = rag_system.get_database_info()
-                        st.success(f"✅ デフォルトDBを読み込みました")
-                    except Exception as e:
-                        st.warning(f"デフォルトDBの読み込みに失敗: {e}")
-
-            # データベース情報を常に最新の状態に更新
-            st.session_state.batch_db_info = rag_system.get_database_info()
-
-            # データベース状態表示
-            _render_database_status(st.session_state.batch_db_info)
-
-            # 別のRAGDBファイルを読み込む
-            uploaded_ragdb = st.file_uploader(
-                "または別の.ragdbファイルを読み込み",
-                type=["ragdb"],
-                key="batch_ragdb_upload_step4"
-            )
-
-            if uploaded_ragdb and st.button("RAGDBを読み込む", key="batch_load_ragdb_step4"):
-                with st.spinner("ナレッジベースを読み込み中..."):
-                    try:
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".ragdb") as temp_file:
-                            temp_file.write(uploaded_ragdb.read())
-                            temp_ragdb_path = temp_file.name
-
-                        rag_system.load_knowledge_base(temp_ragdb_path)
-                        os.unlink(temp_ragdb_path)
-                        # データベース情報を更新
-                        st.session_state.batch_db_info = rag_system.get_database_info()
-                        st.success("✅ ナレッジベースを読み込みました")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ 読み込みエラー: {e}")
-
-        with col2:
-            # RAG校正パラメータ
-            st.write("**RAG校正パラメータ**")
-
-            # プロンプトプリセット選択
-            prompt_loader = get_default_loader()
-            presets = prompt_loader.get_preset_list('rag_proofreading')
-            preset_options = {p['id']: f"{p['name']} - {p['description']}" for p in presets}
-
-            selected_preset = st.selectbox(
-                "プロンプトプリセット",
-                options=list(preset_options.keys()),
-                format_func=lambda x: preset_options[x],
-                index=0,
-                key="batch_rag_preset_step4"
-            )
-
-            search_type = st.selectbox(
-                "検索タイプ",
-                options=["similarity", "mmr"],
-                index=0,
-                key="batch_search_type_step4",
-                help="similarity: 類似度検索 | mmr: 多様性考慮検索"
-            )
-
-            llm_model = st.selectbox(
-                "LLMモデル",
-                options=["gpt-4o", "gpt-4o-mini"],
-                index=1,
-                key="batch_llm_model_step4"
-            )
-
-            top_k = st.slider(
-                "検索する関連文脈の数",
-                min_value=1,
-                max_value=10,
-                value=6,
-                key="batch_top_k_step4"
-            )
-
-        st.divider()
-
-        # RAG校正実行
-        if rag_system.vectorstore is not None:
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("📚 RAG校正を開始", key="batch_start_rag", type="primary"):
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-
-                    total_files = len(st.session_state.batch_extracted_files)
-                    processed = 0
-                    errors = 0
-
-                    for idx, file_info in enumerate(st.session_state.batch_extracted_files):
-                        file_name = file_info['name']
-                        result = st.session_state.batch_processing_results.get(file_name, {})
-
-                        status_text.write(f"**RAG校正中: {file_name}** ({idx + 1}/{total_files})")
-
-                        try:
-                            # 話者識別済みならそれを使用、なければ文字起こし結果を使用
-                            if 'identified_df' in result:
-                                df = result['identified_df']
-                            elif 'transcription_df' in result:
-                                df = result['transcription_df']
-                            else:
-                                st.warning(f"⏭️ スキップ: {file_name}（文字起こし結果がありません）")
-                                continue
-
-                            meeting_text = build_meeting_text_from_dataframe(df)
-                            st.session_state.batch_processing_results.setdefault(file_name, {})['meeting_text'] = meeting_text
-
-                            # RAG校正実行
-                            st.session_state.batch_processing_status[file_name]['rag_proofread'] = 'processing'
-
-                            proofread_result = rag_system.rag_enhanced_proofread(
-                                meeting_text,
-                                search_type=search_type,
-                                top_k=top_k,
-                                model=llm_model,
-                                prompt_preset=selected_preset
-                            )
-
-                            st.session_state.batch_processing_results[file_name]['proofread_text'] = proofread_result
-                            st.session_state.batch_processing_status[file_name]['rag_proofread'] = 'completed'
-                            st.success(f"✅ RAG校正完了: {file_name}")
-                            processed += 1
-
-                        except Exception as e:
-                            st.error(f"❌ エラー発生: {file_name} - {e}")
-                            st.session_state.batch_processing_status[file_name]['rag_proofread'] = 'error'
-                            errors += 1
-                            import traceback
-                            st.error(traceback.format_exc())
-
-                        progress_bar.progress((idx + 1) / total_files)
-
-                    # 完了メッセージ
-                    if errors == 0:
-                        status_text.write(f"✅ **RAG校正完了！ ({processed}/{total_files}ファイル処理)**")
-                        st.session_state.batch_current_step = 5
-                        st.balloons()
-                        st.rerun()
-                    else:
-                        status_text.write(f"⚠️ **RAG校正完了（エラーあり）: 成功 {processed}件 / エラー {errors}件**")
-                        st.warning("⚠️ エラーが発生したファイルがあります。上記のエラーメッセージを確認してください。")
-                        st.info("💡 修正後、再度「RAG校正を開始」ボタンを押すか、「RAG校正をスキップして次へ」で進んでください。")
-
-            with col2:
-                if st.button("🔄 RAG校正をスキップして次へ", key="skip_rag"):
-                    st.session_state.batch_current_step = 5
-                    st.rerun()
-        else:
-            st.warning("⚠️ ナレッジベースが読み込まれていません。RAG校正をスキップする場合は下のボタンをクリックしてください。")
-            if st.button("🔄 RAG校正をスキップして次へ", key="skip_rag_no_kb"):
-                st.session_state.batch_current_step = 5
-                st.rerun()
-
-    # Step 5: 処理結果の確認とダウンロード
     if st.session_state.batch_current_step >= 5:
         st.subheader("Step 5: 処理結果の確認とダウンロード")
 
@@ -2825,7 +1692,7 @@ def batch_processing_pipeline():
                 'ファイル名': file_name,
                 '文字起こし': '✅' if status['transcription'] == 'completed' else '❌' if status['transcription'] == 'error' else '⏭️',
                 '話者識別': '✅' if status['speaker_id'] == 'completed' else '❌' if status['speaker_id'] == 'error' else '⏭️',
-                'RAG校正': '✅' if status['rag_proofread'] == 'completed' else '❌' if status['rag_proofread'] == 'error' else '⏭️'
+                '校正': '✅' if status['rag_proofread'] == 'completed' else '❌' if status['rag_proofread'] == 'error' else '⏭️'
             })
 
         st.dataframe(pd.DataFrame(status_summary), use_container_width=True, hide_index=True)
@@ -2846,7 +1713,7 @@ def batch_processing_pipeline():
                 if selected_file in st.session_state.batch_processing_results:
                     result = st.session_state.batch_processing_results[selected_file]
 
-                    content_tab1, content_tab2, content_tab3 = st.tabs(["📝 文字起こし結果", "🎤 話者識別結果", "📚 RAG校正結果"])
+                    content_tab1, content_tab2, content_tab3 = st.tabs(["📝 文字起こし結果", "🎤 話者識別結果", "📚 校正結果"])
 
                     with content_tab1:
                         if 'transcription_df' in result:
@@ -2929,7 +1796,7 @@ def batch_processing_pipeline():
                                 key=f"download_proofread_{selected_file}_{tab_idx}"
                             )
                         else:
-                            st.info("RAG校正結果がありません（スキップされたか、エラーが発生しました）")
+                            st.info("校正結果がありません（スキップされたか、エラーが発生しました）")
                 else:
                     st.info("このファイルの処理結果がありません")
 
@@ -3071,16 +1938,16 @@ def batch_processing_pipeline():
                         st.error(traceback.format_exc())
 
         with col3:
-            if st.button("📚 RAG校正結果Wordを作成してダウンロード", key="batch_download_rag_word", use_container_width=True):
+            if st.button("📚 校正結果Wordを作成してダウンロード", key="batch_download_rag_word", use_container_width=True):
                 with st.spinner("Wordファイルを作成中..."):
                     try:
                         # 1つのWordドキュメントを作成
                         doc = DocxDocument()
-                        doc.add_heading('RAG校正結果（一括）', level=0)
+                        doc.add_heading('校正結果（一括）', level=0)
                         doc.add_paragraph(f'作成日時: {datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")}')
                         doc.add_paragraph('')
 
-                        # RAG校正結果があるファイルのみ処理
+                        # 校正結果があるファイルのみ処理
                         rag_count = 0
                         for idx, (file_name, result) in enumerate(st.session_state.batch_processing_results.items(), 1):
                             if 'proofread_text' in result:
@@ -3089,7 +1956,7 @@ def batch_processing_pipeline():
                                 doc.add_heading(f'{rag_count}. {file_name}', level=1)
                                 doc.add_paragraph('')
 
-                                # RAG校正結果
+                                # 校正結果
                                 doc.add_heading('校正済み議事録', level=2)
                                 # 段落ごとに分割して追加
                                 for paragraph in result['proofread_text'].split('\n'):
@@ -3102,7 +1969,7 @@ def batch_processing_pipeline():
                                     doc.add_page_break()
 
                         if rag_count == 0:
-                            doc.add_paragraph('（RAG校正結果がありません）')
+                            doc.add_paragraph('（校正結果がありません。このステップはスキップされています）')
 
                         # Wordファイルを保存
                         docx_buffer = BytesIO()
@@ -4131,8 +2998,6 @@ def main():
     st.sidebar.title("メニュー")
     menu_options = [
         "文字起こし",
-        "ナレッジベース管理",
-        "議事録校正（RAG）",
         "🚀 一括処理パイプライン",
         "動画から音声を切り出しMP3で保存"
     ]
@@ -4140,10 +3005,6 @@ def main():
 
     if choice == "文字起こし":
         video_transcribe_and_identify()
-    elif choice == "ナレッジベース管理":
-        knowledge_base_management()
-    elif choice == "議事録校正（RAG）":
-        proofread_meeting_minutes()
     elif choice == "🚀 一括処理パイプライン":
         batch_processing_pipeline()
     elif choice == "動画から音声を切り出しMP3で保存":
