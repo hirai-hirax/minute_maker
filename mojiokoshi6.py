@@ -17,6 +17,7 @@ from datetime import timedelta, datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import json
+import importlib
 import base64
 import uuid
 import subprocess
@@ -924,6 +925,131 @@ def proofread_meeting_minutes():
     st.title("📝 議事録校正（RAG）")
     st.write("RAG機能は削除されたため、このセクションは利用できません。")
     st.info("校正が必要な場合は、文字起こし結果を手動で編集するか、今後追加される代替機能をご利用ください。")
+
+
+def dspy_minutes_app():
+    st.title("🪄 dspy議事録メイカー")
+    st.write("dspyを活用して文字起こしを整理し、簡潔で読みやすい議事録に整形します。")
+
+    st.sidebar.markdown("""
+    ### 🪄 dspy議事録メイカー
+
+    **できること**
+    - 文字起こしを貼り付けて即座に議事録化
+    - スタイルや注目ポイントを指定してリライト
+    - 生成結果をコピーやダウンロード
+
+    **ヒント**
+    - Azure OpenAIの設定が必要です。
+    - dspyが未インストールの場合は `pip install dspy-ai` を実行してください。
+    """)
+
+    _init_session_state({
+        'dspy_minutes_input_text': "",
+        'dspy_minutes_output': "",
+        'dspy_minutes_backend': "",
+        'dspy_minutes_uploaded_name': "",
+        'dspy_minutes_focus': "",
+    })
+
+    dspy_module, dspy_error = _load_dspy_module()
+    dspy_status = "✅ dspyを利用できます" if dspy_module else f"⚠️ {dspy_error}"
+
+    st.markdown(
+        f"<div style='padding:0.5rem 0; color:#4a5568'>接続状態: {dspy_status}</div>",
+        unsafe_allow_html=True,
+    )
+
+    if not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_API_KEY:
+        st.warning("Azure OpenAIの設定が不足しています。環境変数 AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_API_KEY を確認してください。")
+
+    with st.container():
+        uploaded_text = st.file_uploader(
+            "文字起こしテキストファイルを読み込む (txt/md)",
+            type=["txt", "md"],
+            key="dspy_minutes_file_upload"
+        )
+        if uploaded_text is not None:
+            raw_bytes = uploaded_text.read()
+            decoded = raw_bytes.decode("utf-8", errors="replace")
+            st.session_state.dspy_minutes_input_text = decoded
+            st.session_state.dspy_minutes_uploaded_name = uploaded_text.name
+            st.info(f"{uploaded_text.name} を読み込みました。下のテキストを確認してください。")
+
+    st.text_area(
+        "文字起こしを貼り付け",
+        key="dspy_minutes_input_text",
+        height=260,
+        placeholder="ここに文字起こし結果を貼り付けてください。不要なタイムスタンプは自動で除去されます。",
+    )
+
+    focus_points = st.text_area(
+        "強調したい観点 (任意)",
+        key="dspy_minutes_focus",
+        placeholder="例: 決定事項、宿題、論点、リスク、次回までのTODO など"
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        model_name = st.selectbox(
+            "利用するモデル",
+            options=["gpt-4o", "gpt-4o-mini"],
+            index=0,
+            help="dspyおよびAzure OpenAIで利用するモデル名。"
+        )
+        style_label = st.radio(
+            "整形スタイル",
+            options=["要点サマリー", "時系列ダイジェスト", "決定事項ファースト"],
+            index=0,
+        )
+    with col2:
+        length_hint = st.slider(
+            "分量の目安 (段落数)",
+            min_value=3,
+            max_value=20,
+            value=8,
+            help="生成する議事録のおおよその長さを指定します。"
+        )
+        include_todo = st.checkbox("決定事項とTODOを強調する", value=True)
+
+    if st.button("dspyで議事録を生成", type="primary"):
+        transcript_text = st.session_state.dspy_minutes_input_text.strip()
+        if not transcript_text:
+            st.error("文字起こしを入力してください。")
+        else:
+            directives = _build_minutes_directives(style_label, focus_points, length_hint, include_todo)
+            with st.spinner("dspyで議事録化しています..."):
+                minutes_text, error_message = _generate_minutes_with_dspy(transcript_text, directives, model_name)
+                backend = "dspy"
+
+                if not minutes_text:
+                    backend = "Azure OpenAI"
+                    if error_message:
+                        st.warning(f"dspy経由の生成に失敗したためAzure OpenAIで再実行します: {error_message}")
+                    minutes_text = _generate_minutes_with_fallback(transcript_text, directives, model_name)
+
+                st.session_state.dspy_minutes_output = minutes_text
+                st.session_state.dspy_minutes_backend = backend
+
+            st.success(f"{st.session_state.dspy_minutes_backend}で議事録を生成しました。")
+
+    if st.session_state.dspy_minutes_output:
+        st.subheader("生成された議事録")
+        st.caption(f"出力元: {st.session_state.dspy_minutes_backend}")
+        st.text_area(
+            "議事録プレビュー",
+            value=st.session_state.dspy_minutes_output,
+            height=320,
+            key="dspy_minutes_output_preview",
+        )
+
+        st.download_button(
+            label="議事録をテキストでダウンロード",
+            data=st.session_state.dspy_minutes_output.encode("utf-8"),
+            file_name="dspy_minutes.txt",
+            mime="text/plain",
+            key="dspy_minutes_download",
+        )
 
 
 def batch_processing_pipeline():
@@ -2164,6 +2290,87 @@ def _init_session_state(defaults):
         if key not in st.session_state:
             st.session_state[key] = value
 
+
+def _load_dspy_module():
+    """dspyの読み込みを試み、モジュールと状態を返却"""
+    spec = importlib.util.find_spec("dspy")
+    if spec is None:
+        return None, "dspyがインストールされていません。`pip install dspy-ai` を実行してください。"
+
+    dspy = importlib.import_module("dspy")
+    return dspy, None
+
+
+def _build_minutes_directives(style_label: str, focus_points: str, length_hint: int, include_todo: bool) -> str:
+    """議事録整形のディレクティブ文字列を生成"""
+    focus_text = focus_points.strip() if focus_points else "決定事項・TODO・論点を中心に整理してください。"
+    style_templates = {
+        "要点サマリー": "重要な意思決定・論点・TODOを見出し付きで箇条書き。1項目につき1-2文で端的に。",
+        "時系列ダイジェスト": "議事進行の順に、発言のまとまりごとに短い段落でまとめる。流れが追いやすいよう接続詞を適度に配置。",
+        "決定事項ファースト": "決定事項・合意事項を先頭にまとめ、続けて根拠や懸念点を簡潔に列挙。",
+    }
+    todo_line = "決定事項とTODOは太字の見出しでまとめ、箇条書きで簡潔に書いてください。" if include_todo else "重要箇条書きは簡潔にまとめてください。"
+
+    return (
+        f"整理スタイル: {style_templates.get(style_label, style_label)}\n"
+        f"フォーカス: {focus_text}\n"
+        f"長さの目安: {length_hint} 段落程度で簡潔に\n"
+        f"{todo_line}\n"
+        "時刻表現やノイズは除去し、日本語で読みやすく編集します。"
+    )
+
+
+def _generate_minutes_with_dspy(transcript_text: str, directives: str, model_name: str):
+    """dspyを利用して議事録を生成"""
+    dspy, error_message = _load_dspy_module()
+    if dspy is None:
+        return None, error_message
+
+    try:
+        azure_lm = dspy.AzureOpenAI(
+            model=model_name,
+            api_base=AZURE_OPENAI_ENDPOINT,
+            api_key=AZURE_OPENAI_API_KEY,
+            api_version=API_VERSION,
+            max_tokens=1200,
+            temperature=0.3,
+        )
+        dspy.settings.configure(lm=azure_lm)
+
+        class MinutesRewrite(dspy.Signature):
+            """文字起こしを議事録形式に整える"""
+
+            transcript: str = dspy.InputField(desc="元の文字起こし")
+            refinement_directives: str = dspy.InputField(desc="整形方針")
+            minutes: str = dspy.OutputField(desc="整形済み議事録")
+
+        predictor = dspy.Predict(MinutesRewrite)
+        result = predictor(
+            transcript=transcript_text,
+            refinement_directives=directives
+        )
+
+        minutes_text = getattr(result, "minutes", None)
+        if not minutes_text and hasattr(result, "response"):
+            minutes_text = getattr(result, "response")
+
+        return minutes_text, None
+    except Exception as e:
+        return None, str(e)
+
+
+def _generate_minutes_with_fallback(transcript_text: str, directives: str, model_name: str):
+    """Azure OpenAIを使ったフォールバックの議事録生成"""
+    fallback_system_prompt = (
+        "あなたは議事録要約の専門家です。文字起こしを読みやすく整理し、参加者がすぐに振り返れる形でまとめてください。\n"
+        "不要な相槌やノイズは除去し、文体を整えます。決定事項・TODO・論点が分かるように短い見出しを付けてください。\n"
+        f"{directives}\n"
+        "出力は日本語で、過度に長くならないようにしてください。"
+    )
+
+    return generate_summary(model_name, fallback_system_prompt, transcript_text)
+
+
 def _create_row_labels(df):
     """データフレームから行選択用ラベルを作成"""
     labels = []
@@ -3023,6 +3230,7 @@ def main():
     st.sidebar.title("メニュー")
     menu_options = [
         "文字起こし",
+        "🪄 dspy議事録メイカー",
         "🚀 一括処理パイプライン",
         "動画から音声を切り出しMP3で保存"
     ]
@@ -3030,6 +3238,8 @@ def main():
 
     if choice == "文字起こし":
         video_transcribe_and_identify()
+    elif choice == "🪄 dspy議事録メイカー":
+        dspy_minutes_app()
     elif choice == "🚀 一括処理パイプライン":
         batch_processing_pipeline()
     elif choice == "動画から音声を切り出しMP3で保存":
