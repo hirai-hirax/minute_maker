@@ -950,6 +950,8 @@ def dspy_minutes_app():
         'dspy_minutes_backend': "",
         'dspy_minutes_uploaded_name': "",
         'dspy_minutes_focus': "",
+        'dspy_minutes_prompt': DEFAULT_MINUTES_PROMPT,
+        'dspy_minutes_dataset': [],
     })
 
     dspy_module, dspy_error = _load_dspy_module()
@@ -1012,12 +1014,74 @@ def dspy_minutes_app():
         )
         include_todo = st.checkbox("決定事項とTODOを強調する", value=True)
 
+    st.markdown("### プロンプト設定")
+    st.caption("dspyに渡す基礎プロンプト。MIPROv2で更新できます。")
+    st.text_area(
+        "基礎プロンプト",
+        key="dspy_minutes_prompt",
+        height=140,
+    )
+
+    with st.expander("MIPROv2でプロンプトを改善する", expanded=False):
+        st.markdown(
+            "- transcript（文字起こし）と minutes（熟練者が作成した議事録）のペアをJSON/JSONLでアップロードしてください。\n"
+            "- JSONLは1行1サンプル。JSONは配列、または `{'data': [...]} の形式をサポートします。"
+        )
+
+        dataset_file = st.file_uploader(
+            "プロンプト改善用データセット (json / jsonl)",
+            type=["json", "jsonl"],
+            key="dspy_minutes_dataset_upload",
+            help="各サンプルに transcript と minutes のキーが必要です。",
+        )
+
+        if dataset_file is not None:
+            dataset, dataset_error = _parse_minutes_dataset(dataset_file)
+            if dataset_error:
+                st.error(dataset_error)
+            else:
+                st.session_state.dspy_minutes_dataset = dataset
+                st.success(f"{len(dataset)}件のサンプルを読み込みました。")
+                preview = dataset[0] if dataset else {}
+                if preview:
+                    st.caption("サンプルプレビュー")
+                    st.json({
+                        "transcript": (preview.get("transcript", "")[:80] + "...") if preview.get("transcript") else "",
+                        "minutes": (preview.get("minutes", "")[:80] + "...") if preview.get("minutes") else "",
+                    })
+
+        opt_col1, opt_col2 = st.columns(2)
+        with opt_col1:
+            max_iters = st.slider("最適化イテレーション", min_value=1, max_value=8, value=3)
+        with opt_col2:
+            num_candidates = st.slider("候補プロンプト数", min_value=2, max_value=10, value=4)
+
+        if st.button("MIPROv2でプロンプト最適化", key="dspy_minutes_optimize", use_container_width=True):
+            if not st.session_state.dspy_minutes_dataset:
+                st.error("最適化用データセットを読み込んでください。")
+            else:
+                with st.spinner("MIPROv2でプロンプトを改善しています..."):
+                    optimized_prompt, opt_error = _optimize_minutes_prompt(
+                        st.session_state.dspy_minutes_dataset,
+                        st.session_state.dspy_minutes_prompt,
+                        model_name,
+                        max_iters=max_iters,
+                        num_candidates=num_candidates,
+                    )
+                if opt_error:
+                    st.error(opt_error)
+                else:
+                    st.session_state.dspy_minutes_prompt = optimized_prompt
+                    st.success("最適化済みプロンプトを更新しました。")
+
+    base_prompt_text = st.session_state.dspy_minutes_prompt.strip() or DEFAULT_MINUTES_PROMPT
+
     if st.button("dspyで議事録を生成", type="primary"):
         transcript_text = st.session_state.dspy_minutes_input_text.strip()
         if not transcript_text:
             st.error("文字起こしを入力してください。")
         else:
-            directives = _build_minutes_directives(style_label, focus_points, length_hint, include_todo)
+            directives = base_prompt_text + "\n" + _build_minutes_directives(style_label, focus_points, length_hint, include_todo)
             with st.spinner("dspyで議事録化しています..."):
                 minutes_text, error_message = _generate_minutes_with_dspy(transcript_text, directives, model_name)
                 backend = "dspy"
@@ -2301,6 +2365,12 @@ def _load_dspy_module():
     return dspy, None
 
 
+DEFAULT_MINUTES_PROMPT = (
+    "あなたは熟練の議事録専門家です。発言の意図を汲み取り、決定事項・TODO・論点を中心に、"
+    "簡潔で読みやすい日本語の段落に整形してください。不要なノイズやタイムスタンプは除去します。"
+)
+
+
 def _build_minutes_directives(style_label: str, focus_points: str, length_hint: int, include_todo: bool) -> str:
     """議事録整形のディレクティブ文字列を生成"""
     focus_text = focus_points.strip() if focus_points else "決定事項・TODO・論点を中心に整理してください。"
@@ -2318,6 +2388,136 @@ def _build_minutes_directives(style_label: str, focus_points: str, length_hint: 
         f"{todo_line}\n"
         "時刻表現やノイズは除去し、日本語で読みやすく編集します。"
     )
+
+
+def _parse_minutes_dataset(uploaded_file):
+    """プロンプト改善用のデータセットを読み込む"""
+    try:
+        content = uploaded_file.read().decode("utf-8")
+    except Exception as e:
+        return [], f"データセットの読み込みに失敗しました: {e}"
+
+    records = []
+    try:
+        if uploaded_file.name.lower().endswith(".jsonl"):
+            for line in content.splitlines():
+                if not line.strip():
+                    continue
+                data = json.loads(line)
+                transcript = data.get("transcript")
+                minutes = data.get("minutes")
+                if transcript and minutes:
+                    records.append({"transcript": transcript, "minutes": minutes})
+        else:
+            data = json.loads(content)
+            if isinstance(data, list):
+                for item in data:
+                    transcript = item.get("transcript")
+                    minutes = item.get("minutes")
+                    if transcript and minutes:
+                        records.append({"transcript": transcript, "minutes": minutes})
+            elif isinstance(data, dict):
+                dataset_items = data.get("data") or []
+                for item in dataset_items:
+                    transcript = item.get("transcript")
+                    minutes = item.get("minutes")
+                    if transcript and minutes:
+                        records.append({"transcript": transcript, "minutes": minutes})
+    except json.JSONDecodeError as e:
+        return [], f"JSONのパースに失敗しました: {e}"
+
+    if not records:
+        return [], "有効なtranscript・minutesのペアが見つかりませんでした。"
+
+    return records, None
+
+
+def _minutes_similarity_metric(example, prediction, trace=None):
+    """MIPROv2用の簡易類似度メトリクス"""
+    target_minutes = getattr(example, "minutes", "") or ""
+    predicted_minutes = getattr(prediction, "minutes", "") or ""
+
+    if not target_minutes or not predicted_minutes:
+        return 0.0
+
+    target_tokens = set(target_minutes.split())
+    predicted_tokens = set(predicted_minutes.split())
+    if not target_tokens:
+        return 0.0
+
+    overlap = len(target_tokens & predicted_tokens)
+    return overlap / len(target_tokens)
+
+
+def _optimize_minutes_prompt(dataset, base_prompt, model_name, max_iters=3, num_candidates=4):
+    """MIPROv2を用いて議事録プロンプトを最適化"""
+    dspy, error_message = _load_dspy_module()
+    if dspy is None:
+        return None, error_message
+
+    teleprompt_spec = importlib.util.find_spec("dspy.teleprompt")
+    if teleprompt_spec is None:
+        return None, "dspy.teleprompt モジュールが見つかりません。dspyのバージョンを確認してください。"
+
+    teleprompt_module = importlib.import_module("dspy.teleprompt")
+    if not hasattr(teleprompt_module, "MIPROv2"):
+        return None, "MIPROv2 が利用できません。dspyをアップデートしてください。"
+
+    MIPROv2 = getattr(teleprompt_module, "MIPROv2")
+
+    azure_lm = dspy.AzureOpenAI(
+        model=model_name,
+        api_base=AZURE_OPENAI_ENDPOINT,
+        api_key=AZURE_OPENAI_API_KEY,
+        api_version=API_VERSION,
+        max_tokens=1200,
+        temperature=0.3,
+    )
+    dspy.settings.configure(lm=azure_lm)
+
+    class MinutesRewrite(dspy.Signature):
+        """MIPRO用の議事録リライトシグネチャ"""
+
+        transcript: str = dspy.InputField(desc="元の文字起こし")
+        refinement_directives: str = dspy.InputField(desc="整形方針")
+        minutes: str = dspy.OutputField(desc="整形済み議事録")
+
+    program = dspy.Predict(MinutesRewrite)
+
+    trainset = []
+    for item in dataset:
+        transcript = item.get("transcript")
+        minutes = item.get("minutes")
+        if not transcript or not minutes:
+            continue
+        example = dspy.Example(
+            transcript=transcript,
+            refinement_directives=base_prompt,
+            minutes=minutes,
+        ).with_inputs("transcript", "refinement_directives")
+        trainset.append(example)
+
+    if not trainset:
+        return None, "学習に使えるサンプルがありません。"
+
+    teleprompter = MIPROv2(
+        metric=_minutes_similarity_metric,
+        init_prompt=base_prompt,
+        num_candidates=num_candidates,
+        max_iters=max_iters,
+        allow_refusal=False,
+        verbose=False,
+    )
+
+    optimized_program = teleprompter.compile(program, trainset=trainset)
+
+    optimized_prompt = getattr(teleprompter, "best_prompt", None)
+    if not optimized_prompt:
+        optimized_prompt = getattr(optimized_program, "prompt", None)
+    if not optimized_prompt and hasattr(optimized_program, "signature"):
+        optimized_prompt = getattr(optimized_program.signature, "instructions", None)
+
+    return optimized_prompt or base_prompt, None
 
 
 def _generate_minutes_with_dspy(transcript_text: str, directives: str, model_name: str):
