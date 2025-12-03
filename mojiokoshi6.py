@@ -9,7 +9,8 @@ import fitz
 import torch
 import pandas as pd
 from dotenv import load_dotenv
-from resemblyzer import VoiceEncoder, preprocess_wav
+import torchaudio
+from speechbrain.pretrained import EncoderClassifier
 import numpy as np
 import zipfile
 from datetime import timedelta, datetime
@@ -487,16 +488,45 @@ def _transcribe_audio_single(uploaded_file: BytesIO, reference_file: BytesIO = N
         return pd.DataFrame(columns=["start", "end", "speaker", "text"])
 
 @st.cache_resource
-def load_voice_encoder():
-    """Caches the VoiceEncoder model."""
-    return VoiceEncoder()
+def load_speaker_encoder():
+    """Caches the SpeechBrain speaker encoder model."""
+    return EncoderClassifier.from_hparams(
+        source="speechbrain/spkrec-ecapa-voxceleb",
+        run_opts={"device": "cpu"}
+    )
+
+def _compute_embedding_from_wav_bytes(wav_bytes: bytes) -> np.ndarray:
+    """Compute a speaker embedding from WAV bytes using SpeechBrain."""
+    with temp_file_path(wav_bytes, ".wav") as wav_path:
+        waveform, sample_rate = torchaudio.load(wav_path)
+
+    if waveform.shape[0] > 1:
+        waveform = waveform.mean(dim=0, keepdim=True)
+
+    target_sr = 16000
+    if sample_rate != target_sr:
+        waveform = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=target_sr)(waveform)
+
+    encoder = load_speaker_encoder()
+    waveform = waveform.to(dtype=torch.float32)
+
+    with torch.no_grad():
+        embedding = encoder.encode_batch(waveform)
+
+    return embedding.squeeze().cpu().numpy()
 
 def extract_embedding(audio_content):
-    """Extracts embedding from audio content."""
-    with temp_file_path(audio_content.read(), ".wav") as wav_path:
-        wav = preprocess_wav(wav_path)
-        encoder = load_voice_encoder()
-        return encoder.embed_utterance(wav)
+    """Extracts embedding from audio content using SpeechBrain."""
+    audio_bytes = audio_content.read()
+    audio_content.seek(0)
+
+    try:
+        audio_segment = AudioSegment.from_file(BytesIO(audio_bytes))
+        wav_bytes = audio_segment.export(format="wav").read()
+    except Exception:
+        wav_bytes = audio_bytes
+
+    return _compute_embedding_from_wav_bytes(wav_bytes)
 
 def load_speaker_embeddings_from_files(uploaded_files):
     """Loads known speaker embeddings from uploaded files.
@@ -570,23 +600,21 @@ def identify_speakers_in_dataframe(audio_file, df: pd.DataFrame, uploaded_embedd
         try:
             audio = AudioSegment.from_file(audio_path)
             df['speaker'] = None
-            encoder = load_voice_encoder()
             progress_bar, status_text = st.progress(0), st.empty()
 
             for index, row in df.iterrows():
                 segment = audio[row['start'] * 1000:row['end'] * 1000]
 
-                with temp_file_path(segment.export(format="wav").read(), ".wav") as segment_path:
-                    try:
-                        wav = preprocess_wav(segment_path)
-                        segment_embedding = encoder.embed_utterance(wav)
-                        speaker = _identify_speaker(segment_embedding, known_embeddings, similarity_threshold)
-                        df.at[index, 'speaker'] = speaker
-                        status = f"Identified as {speaker}" if speaker else "Similarity below threshold"
-                        status_text.text(f"Processed segment {index + 1}/{len(df)}: {status}")
-                    except Exception as e:
-                        st.error(f"Error processing segment {row['start']}-{row['end']}s: {e}")
-                        df.at[index, 'speaker'] = "Error"
+                try:
+                    segment_wav_bytes = segment.export(format="wav").read()
+                    segment_embedding = _compute_embedding_from_wav_bytes(segment_wav_bytes)
+                    speaker = _identify_speaker(segment_embedding, known_embeddings, similarity_threshold)
+                    df.at[index, 'speaker'] = speaker
+                    status = f"Identified as {speaker}" if speaker else "Similarity below threshold"
+                    status_text.text(f"Processed segment {index + 1}/{len(df)}: {status}")
+                except Exception as e:
+                    st.error(f"Error processing segment {row['start']}-{row['end']}s: {e}")
+                    df.at[index, 'speaker'] = "Error"
 
                 progress_bar.progress((index + 1) / len(df))
 
@@ -2206,10 +2234,7 @@ def extract_audio_segment_for_embedding(audio_io, df, selected_indices):
 
         wav_bytes = audio_segment.export(format="wav").read()
 
-    with temp_file_path(wav_bytes, ".wav") as segment_path:
-        wav = preprocess_wav(segment_path)
-        encoder = load_voice_encoder()
-        embedding = encoder.embed_utterance(wav)
+    embedding = _compute_embedding_from_wav_bytes(wav_bytes)
 
     return embedding, (end_sec - start_sec)
 
