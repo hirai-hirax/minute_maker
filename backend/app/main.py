@@ -1,7 +1,7 @@
 from uuid import uuid4
 from typing import List
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -86,3 +86,40 @@ async def create_minute(minute: MinuteBase) -> Minute:
     new_minute = Minute(id=str(uuid4()), **minute.model_dump())
     _minutes.append(new_minute)
     return new_minute
+
+
+class ProcessingResult(BaseModel):
+    id: str
+    transcript: str
+    summary: str
+    speakers: List[str]
+
+
+@app.post("/api/process_audio", response_model=ProcessingResult, summary="Process audio file")
+async def process_audio(file: UploadFile = File(...)):
+    # Placeholder for actual processing logic:
+    # 1. Save file temporarily
+    # 2. Transcribe (Whisper/SpeechBrain)
+    # 3. Diarize (SpeechBrain)
+    # 4. Summarize (AOAI GPT)
+    
+    # Mock response for frontend development
+    import time
+    time.sleep(2)  # Simulate processing time
+    
+    return ProcessingResult(
+        id=str(uuid4()),
+        transcript="[00:00:00] Speaker A: This is a simulated transcript.\n[00:00:05] Speaker B: It works!",
+        summary="The meeting was successfully processed. This is a mock summary.",
+        speakers=["Speaker A", "Speaker B"]
+    )
+
+
+@app.get("/api/minutes/{minute_id}/download", summary="Download minutes as file")
+async def download_minutes(minute_id: str, format: str = "docx"):
+    # Placeholder for file generation logic
+    # Should generate .docx or .xlsx based on 'format'
+    
+    # For now, return a simple text response or file
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(f"Content for minute {minute_id} in format {format}")
