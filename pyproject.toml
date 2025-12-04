@@ -1,0 +1,21 @@
+[project]
+name = "minute-maker"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "extract-msg>=0.55.0",
+    "openai>=2.8.1",
+    "pandas>=2.3.3",
+    "pydub>=0.25.1",
+    "pymupdf>=1.26.6",
+    "python-docx>=1.2.0",
+    "python-dotenv>=1.2.1",
+    "python-pptx>=1.0.2",
+    "speechbrain>=1.0.3",
+    "torch==2.5.1",
+    "torchaudio==2.5.1",
+    "soundfile>=0.12.1",
+    "requests>=2.31.0",
+]
