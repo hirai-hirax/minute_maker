@@ -18,4 +18,8 @@ dependencies = [
     "torchaudio==2.5.1",
     "soundfile>=0.12.1",
     "requests>=2.31.0",
+    "fastapi>=0.123.9",
+    "uvicorn[standard]>=0.38.0",
+    "numpy>=2.3.5",
+    "python-multipart>=0.0.20",
 ]

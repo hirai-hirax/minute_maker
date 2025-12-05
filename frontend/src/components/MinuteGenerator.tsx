@@ -1,23 +1,42 @@
 import React, { useState, useRef } from 'react';
-import { Upload, FileAudio, CheckCircle, Loader2, FileText, FileSpreadsheet, Play, Pause } from 'lucide-react';
+import { Upload, FileAudio, CheckCircle, Loader2, FileText, FileSpreadsheet, Play, Pause, UserPlus, X } from 'lucide-react';
 import './MinuteGenerator.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000';
 
 type ProcessState = 'idle' | 'uploading' | 'transcribing' | 'diarizing' | 'summarizing' | 'completed' | 'error';
 
+interface TranscriptSegment {
+    start: number;
+    end: number;
+    text: string;
+    speaker: string;
+}
+
 interface ProcessingResult {
     id: string;
     transcript: string;
+    segments: TranscriptSegment[];
     summary: string;
     speakers: string[];
 }
+
+const formatTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+};
 
 export function MinuteGenerator() {
     const [state, setState] = useState<ProcessState>('idle');
     const [file, setFile] = useState<File | null>(null);
     const [result, setResult] = useState<ProcessingResult | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [registerModal, setRegisterModal] = useState<{ isOpen: boolean; segment: TranscriptSegment | null; name: string }>({
+        isOpen: false,
+        segment: null,
+        name: ''
+    });
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -89,10 +108,52 @@ export function MinuteGenerator() {
         setResult({
             id: '123',
             transcript: "[00:00:00] Speaker A: こんにちは、本日の会議を始めます。\n[00:00:05] Speaker B: よろしくお願いします。まずは進捗報告からですね。\n[00:00:15] Speaker A: はい、フロントエンドの実装はほぼ完了しました。",
+            segments: [
+                { start: 0, end: 5, speaker: "Speaker A", text: "こんにちは、本日の会議を始めます。" },
+                { start: 5, end: 15, speaker: "Speaker B", text: "よろしくお願いします。まずは進捗報告からですね。" },
+                { start: 15, end: 20, speaker: "Speaker A", text: "はい、フロントエンドの実装はほぼ完了しました。" }
+            ],
             summary: "本日の会議では、プロジェクトの進捗報告が行われました。フロントエンドの実装は順調に進んでおり、ほぼ完了していることが報告されました。",
             speakers: ["Speaker A", "Speaker B"]
         });
         setState('completed');
+    };
+
+
+
+    const handleRegisterSpeaker = async () => {
+        if (!registerModal.segment || !result || !registerModal.name.trim()) return;
+
+        try {
+            const response = await fetch(`${API_BASE}/api/register_speaker`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    process_id: result.id,
+                    start: registerModal.segment.start,
+                    end: registerModal.segment.end,
+                    speaker_name: registerModal.name
+                }),
+            });
+
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.detail || 'Registration failed');
+            }
+
+            alert(`Speaker "${registerModal.name}" registered successfully! Future identifications will recognize this voice.`);
+            setRegisterModal({ isOpen: false, segment: null, name: '' });
+        } catch (e: any) {
+            alert(`Error: ${e.message}`);
+        }
+    };
+
+    const openRegisterModal = (segment: TranscriptSegment) => {
+        setRegisterModal({
+            isOpen: true,
+            segment: segment,
+            name: segment.speaker || ''
+        });
     };
 
     const downloadFile = (type: 'docx' | 'xlsx') => {
@@ -102,6 +163,43 @@ export function MinuteGenerator() {
 
     return (
         <div className="minute-generator animate-fade-in">
+            {registerModal.isOpen && (
+                <div className="modal-overlay">
+                    <div className="modal-content">
+                        <div className="modal-header">
+                            <h3>話者登録</h3>
+                            <button onClick={() => setRegisterModal({ ...registerModal, isOpen: false })}>
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <div className="modal-body">
+                            <p className="text-sm text-secondary mb-4">
+                                以下のセグメントの音声を使用して、話者「{registerModal.name}」の特徴をシステムに登録します。
+                            </p>
+                            <div className="segment-preview">
+                                "{registerModal.segment?.text}"
+                            </div>
+                            <label className="input-label mt-4">話者名</label>
+                            <input
+                                type="text"
+                                className="input-field"
+                                value={registerModal.name}
+                                onChange={(e) => setRegisterModal({ ...registerModal, name: e.target.value })}
+                                placeholder="例: 山田太郎"
+                                autoFocus
+                            />
+                        </div>
+                        <div className="modal-footer">
+                            <button className="btn btn-secondary" onClick={() => setRegisterModal({ ...registerModal, isOpen: false })}>
+                                キャンセル
+                            </button>
+                            <button className="btn btn-primary" onClick={handleRegisterSpeaker}>
+                                登録する
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
             <div className="card">
                 <div className="card__header mb-4">
                     <div>
@@ -185,7 +283,36 @@ export function MinuteGenerator() {
                                 <div className="flex flex-col gap-4">
                                     <h3 className="font-medium">文字起こし全文</h3>
                                     <div className="transcript-box">
-                                        {result.transcript}
+                                        <table className="transcript-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Start</th>
+                                                    <th>End</th>
+                                                    <th>Speaker</th>
+                                                    <th>Text</th>
+                                                    <th>Action</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {result.segments.map((seg, idx) => (
+                                                    <tr key={idx}>
+                                                        <td>{formatTime(seg.start)}</td>
+                                                        <td>{formatTime(seg.end)}</td>
+                                                        <td>{seg.speaker}</td>
+                                                        <td>{seg.text}</td>
+                                                        <td>
+                                                            <button
+                                                                className="icon-btn"
+                                                                title="話者を登録"
+                                                                onClick={() => openRegisterModal(seg)}
+                                                            >
+                                                                <UserPlus size={16} />
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
                                     </div>
                                 </div>
                             </div>
