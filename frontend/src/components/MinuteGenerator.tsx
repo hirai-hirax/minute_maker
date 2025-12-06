@@ -44,6 +44,7 @@ export function MinuteGenerator() {
     const [selectedPromptId, setSelectedPromptId] = useState<string>('standard');
     const [selectedModel, setSelectedModel] = useState<'gpt-4o' | 'whisper'>('gpt-4o');
     const [mergedTranscript, setMergedTranscript] = useState<{ speaker: string; text: string }[]>([]);
+    const [transcriptViewMode, setTranscriptViewMode] = useState<'structured' | 'text'>('structured');
 
     const [registerModal, setRegisterModal] = useState<{ isOpen: boolean; segment: TranscriptSegment | null; name: string }>({
         isOpen: false,
@@ -158,8 +159,15 @@ export function MinuteGenerator() {
         }
 
         setMergedTranscript(merged);
+        setTranscriptViewMode('structured');
         setState('summarizing_setup');
     };
+
+    const formattedTranscriptText = React.useMemo(() => {
+        return mergedTranscript
+            .map((item) => `${item.speaker || 'Unknown'}: ${item.text}`)
+            .join("\n\n");
+    }, [mergedTranscript]);
 
     const handleSummarize = async () => {
         if (!result) return;
@@ -415,8 +423,8 @@ export function MinuteGenerator() {
                                         <button className="btn btn-secondary" onClick={handleIdentifySpeakers}>
                                             <RefreshCw size={16} /> 話者識別を実行
                                         </button>
-                                        <button className="btn btn-primary" onClick={handleSummarize}>
-                                            要約・整形へ進む <ArrowRight size={16} />
+                                        <button className="btn btn-primary" onClick={prepareSummarySetup}>
+                                            要約・整形の確認へ <ArrowRight size={16} />
                                         </button>
                                     </div>
                                 </div>
@@ -474,15 +482,45 @@ export function MinuteGenerator() {
                                         <h3 className="font-medium mb-4">要約生成の設定</h3>
                                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                                             <div className="col-span-2">
-                                                <h4 className="text-sm font-medium text-secondary mb-2">統合された文字起こしプレビュー</h4>
-                                                <div className="transcript-box" style={{ maxHeight: '400px' }}>
-                                                    {mergedTranscript.map((item, idx) => (
-                                                        <div key={idx} className="mb-4 pb-2 border-b border-gray-700 last:border-0">
-                                                            <div className="font-bold text-accent-primary text-sm mb-1">{item.speaker || "Unknown"}</div>
-                                                            <div className="text-sm leading-relaxed">{item.text}</div>
-                                                        </div>
-                                                    ))}
+                                                <div className="flex items-start justify-between gap-4 mb-2 flex-wrap">
+                                                    <div>
+                                                        <h4 className="text-sm font-medium text-secondary">整形済み文字起こし</h4>
+                                                        <p className="text-xs text-secondary mt-1">確認用に複数行をまとめたテキスト形式を切り替えできます。</p>
+                                                    </div>
+                                                    <div className="view-toggle">
+                                                        <button
+                                                            className={`toggle-btn ${transcriptViewMode === 'structured' ? 'active' : ''}`}
+                                                            onClick={() => setTranscriptViewMode('structured')}
+                                                            type="button"
+                                                        >
+                                                            リスト表示
+                                                        </button>
+                                                        <button
+                                                            className={`toggle-btn ${transcriptViewMode === 'text' ? 'active' : ''}`}
+                                                            onClick={() => setTranscriptViewMode('text')}
+                                                            type="button"
+                                                        >
+                                                            テキスト表示
+                                                        </button>
+                                                    </div>
                                                 </div>
+                                                {transcriptViewMode === 'structured' ? (
+                                                    <div className="transcript-box" style={{ maxHeight: '400px' }}>
+                                                        {mergedTranscript.map((item, idx) => (
+                                                            <div key={idx} className="mb-4 pb-2 border-b border-gray-700 last:border-0">
+                                                                <div className="font-bold text-accent-primary text-sm mb-1">{item.speaker || "Unknown"}</div>
+                                                                <div className="text-sm leading-relaxed">{item.text}</div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <textarea
+                                                        className="transcript-textarea"
+                                                        value={formattedTranscriptText}
+                                                        readOnly
+                                                        aria-label="整形済み文字起こしのテキスト表示"
+                                                    />
+                                                )}
                                             </div>
                                             <div className="col-span-1">
                                                 <div className="bg-secondary p-4 rounded-lg border border-border">
