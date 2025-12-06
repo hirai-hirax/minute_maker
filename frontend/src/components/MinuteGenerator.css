@@ -327,3 +327,52 @@
 .transcript-box::-webkit-scrollbar-thumb { background: var(--bg-tertiary); border-radius: 4px; }
 .transcript-box::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
 
+
+/* Reference Files Styles */
+.reference-files-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.reference-file-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background-color: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 0.5rem 0.75rem;
+    transition: background-color 0.2s;
+}
+
+.reference-file-item:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.reference-file-item .file-name {
+    flex: 1;
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.reference-file-item .remove-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0.25rem;
+    border-radius: 4px;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.reference-file-item .remove-btn:hover {
+    color: var(--danger);
+    background-color: rgba(239, 68, 68, 0.1);
+}

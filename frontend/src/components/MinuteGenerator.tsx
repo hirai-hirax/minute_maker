@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Upload, FileAudio, CheckCircle, Loader2, FileText, FileSpreadsheet, Play, Pause, UserPlus, X, RefreshCw, ArrowRight } from 'lucide-react';
+import { Upload, FileAudio, CheckCircle, Loader2, FileText, FileSpreadsheet, Play, Pause, UserPlus, X, RefreshCw, ArrowRight, Paperclip } from 'lucide-react';
 import './MinuteGenerator.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000';
@@ -45,6 +45,7 @@ export function MinuteGenerator() {
     const [selectedModel, setSelectedModel] = useState<'gpt-4o' | 'whisper'>('gpt-4o');
     const [mergedTranscript, setMergedTranscript] = useState<{ speaker: string; text: string }[]>([]);
     const [transcriptViewMode, setTranscriptViewMode] = useState<'structured' | 'text'>('structured');
+    const [referenceFiles, setReferenceFiles] = useState<File[]>([]);
 
     const [registerModal, setRegisterModal] = useState<{ isOpen: boolean; segment: TranscriptSegment | null; name: string }>({
         isOpen: false,
@@ -52,6 +53,7 @@ export function MinuteGenerator() {
         name: ''
     });
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const referenceInputRef = useRef<HTMLInputElement>(null);
 
     React.useEffect(() => {
         fetch(`${API_BASE}/api/prompts`)
@@ -169,6 +171,17 @@ export function MinuteGenerator() {
             .join("\n\n");
     }, [mergedTranscript]);
 
+    const handleReferenceFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files) {
+            const filesArray = Array.from(e.target.files);
+            setReferenceFiles(prev => [...prev, ...filesArray]);
+        }
+    };
+
+    const removeReferenceFile = (index: number) => {
+        setReferenceFiles(prev => prev.filter((_, i) => i !== index));
+    };
+
     const handleSummarize = async () => {
         if (!result) return;
         setState('summarizing');
@@ -176,13 +189,18 @@ export function MinuteGenerator() {
         const transcriptText = mergedTranscript.map(m => `${m.speaker}: ${m.text}`).join("\n");
 
         try {
+            // Use FormData to support file uploads
+            const formData = new FormData();
+            formData.append('transcript', transcriptText);
+            formData.append('prompt_id', selectedPromptId);
+
+            // Append reference files
+            referenceFiles.forEach(file => {
+                formData.append('reference_files', file);
+            });
             const response = await fetch(`${API_BASE}/api/generate_summary`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    transcript: transcriptText,
-                    prompt_id: selectedPromptId
-                }),
+                body: formData,
             });
 
             if (!response.ok) throw new Error('Summarization failed');
@@ -572,6 +590,54 @@ export function MinuteGenerator() {
                                                             </label>
                                                         ))}
                                                     </div>
+                                                    {/* Reference Materials Section */}
+                                                    <div className="mt-6 pt-4 border-t border-border">
+                                                        <h4 className="font-medium mb-2 flex items-center gap-2">
+                                                            <Paperclip size={18} />
+                                                            参考資料
+                                                        </h4>
+                                                        <p className="text-secondary text-xs mb-3">
+                                                            要約に使用する参考資料をアップロード (任意)
+                                                        </p>
+
+                                                        <input
+                                                            type="file"
+                                                            ref={referenceInputRef}
+                                                            hidden
+                                                            accept=".docx,.xlsx,.pptx,.pdf,.txt"
+                                                            multiple
+                                                            onChange={handleReferenceFileSelect}
+                                                        />
+
+                                                        <button
+                                                            className="btn btn-secondary w-full mb-3 text-sm"
+                                                            onClick={() => referenceInputRef.current?.click()}
+                                                            type="button"
+                                                        >
+                                                            <Paperclip size={16} />
+                                                            ファイルを選択
+                                                        </button>
+
+                                                        {referenceFiles.length > 0 && (
+                                                            <div className="reference-files-list">
+                                                                {referenceFiles.map((file, idx) => (
+                                                                    <div key={idx} className="reference-file-item">
+                                                                        <span className="file-name">{file.name}</span>
+                                                                        <button
+                                                                            className="remove-btn"
+                                                                            onClick={() => removeReferenceFile(idx)}
+                                                                            type="button"
+                                                                            title="削除"
+                                                                        >
+                                                                            <X size={14} />
+                                                                        </button>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+
 
                                                     <button className="btn btn-primary w-full mt-6" onClick={handleSummarize}>
                                                         AI要約を実行

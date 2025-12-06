@@ -15,7 +15,7 @@ from io import BytesIO
 from contextlib import contextmanager
 
 from dotenv import load_dotenv
-from openai import AzureOpenAI
+from openai import AzureOpenAI, OpenAI
 
 import torch
 import torchaudio
@@ -69,9 +69,18 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Azure OpenAI Configuration
 AZURE_OPENAI_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_API_KEY = os.environ.get("AZURE_OPENAI_API_KEY")
 API_VERSION = "2025-03-01-preview"
+
+# LLM Provider Configuration
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "azure")  # azure, ollama
+
+# Ollama Configuration
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.1")
+OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "ollama")
 
 # OSS Whisper Configuration
 WHISPER_PROVIDER = os.environ.get("WHISPER_PROVIDER", "azure")  # azure, faster-whisper
@@ -103,7 +112,8 @@ PROMPTS_DATA = {
 }
 
 
-CHAT_MODEL_NAME = "gpt-4o"  # Default to gpt-4o for chat operations
+# Chat model name - determined by provider
+CHAT_MODEL_NAME = OLLAMA_MODEL if LLM_PROVIDER == "ollama" else "gpt-4o"
 
 
 class MinuteBase(BaseModel):
@@ -220,14 +230,36 @@ class ProcessingResult(BaseModel):
     speakers: List[str]
 
 
+def _create_llm_client(api_version: str = API_VERSION):
+    """Create LLM client based on configured provider (Azure OpenAI or Ollama)"""
+    # Auto-detect provider if OLLAMA_BASE_URL is configured
+    provider = LLM_PROVIDER
+    if provider == "azure" and OLLAMA_BASE_URL and OLLAMA_BASE_URL != "http://localhost:11434/v1":
+        # If Ollama URL is explicitly configured, use it
+        provider = "ollama"
+    
+    if provider == "ollama":
+        logger.info(f"Using Ollama LLM provider at {OLLAMA_BASE_URL} with model {OLLAMA_MODEL}")
+        return OpenAI(
+            base_url=OLLAMA_BASE_URL,
+            api_key=OLLAMA_API_KEY,
+        )
+    else:
+        # Default to Azure OpenAI
+        if not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_API_KEY:
+            raise RuntimeError("AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY must be set")
+        logger.info("Using Azure OpenAI LLM provider")
+        return AzureOpenAI(
+            azure_endpoint=AZURE_OPENAI_ENDPOINT,
+            api_key=AZURE_OPENAI_API_KEY,
+            api_version=api_version,
+        )
+
+
+# Backward compatibility alias
 def _create_azure_client(api_version: str = API_VERSION) -> AzureOpenAI:
-    if not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_API_KEY:
-        raise RuntimeError("AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY must be set")
-    return AzureOpenAI(
-        azure_endpoint=AZURE_OPENAI_ENDPOINT,
-        api_key=AZURE_OPENAI_API_KEY,
-        api_version=api_version,
-    )
+    """Deprecated: Use _create_llm_client instead"""
+    return _create_llm_client(api_version)
 
 
 # ---------------------------------------------------------------------------
@@ -911,6 +943,9 @@ async def identify_speakers(
 class SummarizeRequest(BaseModel):
     transcript: str
     prompt_id: str = "standard"
+    llm_provider: Optional[str] = None  # Override provider: 'azure' or 'ollama'
+    ollama_base_url: Optional[str] = None  # Ollama URL
+    ollama_model: Optional[str] = None  # Ollama model name
 
 class SummarizeResponse(BaseModel):
     summary: str
@@ -925,20 +960,74 @@ async def get_prompts():
     ]
 
 @app.post("/api/generate_summary", response_model=SummarizeResponse, summary="Generate summary from transcript")
-async def generate_summary(req: SummarizeRequest):
-    client = _create_azure_client()
+async def generate_summary(
+    transcript: str = Form(...),
+    prompt_id: str = Form("standard"),
+    llm_provider: Optional[str] = Form(None),
+    ollama_base_url: Optional[str] = Form(None),
+    ollama_model: Optional[str] = Form(None),
+    reference_files: List[UploadFile] = File(default=[])
+):
+    """
+    Generate summary from transcript with optional reference materials.
     
-    prompt_config = PROMPTS_DATA.get(req.prompt_id, PROMPTS_DATA["standard"])
+    Args:
+        transcript: The meeting transcript text
+        prompt_id: ID of the prompt preset to use
+        llm_provider: LLM provider ('azure' or 'ollama')
+        ollama_base_url: Base URL for Ollama (if using Ollama)
+        ollama_model: Model name for Ollama (if using Ollama)
+        reference_files: Optional reference documents (.docx, .xlsx, .pptx, .pdf, .txt)
+    """
+    from .document_parser import extract_text_from_file
+    
+    # Create client with overridden settings if provided
+    if llm_provider == "ollama" and ollama_base_url and ollama_model:
+        logger.info(f"Using Ollama for summarization: {ollama_base_url} with model {ollama_model}")
+        client = OpenAI(
+            base_url=ollama_base_url,
+            api_key="ollama"
+        )
+        model_name = ollama_model
+    else:
+        client = _create_llm_client()
+        model_name = CHAT_MODEL_NAME
+    
+    prompt_config = PROMPTS_DATA.get(prompt_id, PROMPTS_DATA["standard"])
     system_prompt = prompt_config["system_prompt"]
     
+    # Process reference files
+    reference_texts = []
+    if reference_files:
+        logger.info(f"Processing {len(reference_files)} reference files")
+        for ref_file in reference_files:
+            try:
+                file_bytes = await ref_file.read()
+                extracted_text = extract_text_from_file(ref_file.filename, file_bytes)
+                reference_texts.append(f"--- Reference: {ref_file.filename} ---\n{extracted_text}")
+                logger.info(f"Successfully extracted text from {ref_file.filename}")
+            except Exception as e:
+                logger.warning(f"Failed to extract text from {ref_file.filename}: {e}")
+                # Continue with other files instead of failing completely
+    
+    # Build user prompt with transcript and optional reference materials
     user_prompt = f"""
     Transcript:
-    {req.transcript}
+    {transcript}
+    """
+    
+    if reference_texts:
+        user_prompt += f"""
+    
+    Additional Reference Materials:
+    {chr(10).join(reference_texts)}
+    
+    Please use the above reference materials as additional context when generating the summary.
     """
     
     try:
         completion = client.chat.completions.create(
-            model=CHAT_MODEL_NAME,
+            model=model_name,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}

@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { MinuteGenerator } from './components/MinuteGenerator'
 import { SpeakerManager } from './components/SpeakerManager'
-import { Layout, Plus, List, Users } from 'lucide-react'
+import { Settings } from './components/Settings'
+import { Layout, Plus, List, Users, Settings as SettingsIcon } from 'lucide-react'
 import './App.css'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'generate' | 'list' | 'speakers'>('generate')
+  const [activeTab, setActiveTab] = useState<'generate' | 'speakers' | 'settings'>('generate')
   const [resetKey, setResetKey] = useState(0)
 
   const handleLogoClick = () => {
@@ -41,11 +42,11 @@ function App() {
               話者管理
             </button>
             <button
-              className={`nav-btn ${activeTab === 'list' ? 'active' : ''}`}
-              onClick={() => setActiveTab('list')}
+              className={`nav-btn ${activeTab === 'settings' ? 'active' : ''}`}
+              onClick={() => setActiveTab('settings')}
             >
-              <List size={16} />
-              一覧
+              <SettingsIcon size={16} />
+              設定
             </button>
           </nav>
         </div>
@@ -56,13 +57,13 @@ function App() {
           <div className="content-wrapper">
             <MinuteGenerator key={resetKey} />
           </div>
-        ) : activeTab === 'speakers' ? (
+        ) : activeTab === 'settings' ? (
           <div className="content-wrapper">
-            <SpeakerManager />
+            <Settings />
           </div>
         ) : (
-          <div className="empty-state">
-            <p>議事録一覧機能は現在メンテナンス中です。</p>
+          <div className="content-wrapper">
+            <SpeakerManager />
           </div>
         )}
       </main>
