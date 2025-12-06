@@ -2,7 +2,7 @@
 
 ## Current Status
 - **Date**: 2025-12-06
-- **Latest Feature**: Speaker Embedding File Generation & Download
+- **Latest Feature**: Navigation UI Improvements
 - **Build Status**: Stable
 
 ## Recent Accomplishments
@@ -45,6 +45,12 @@
   - Created `download_model.py` script for manual model download using `huggingface_hub`.
   - Updated `load_speaker_encoder()` to prioritize pre-downloaded model files.
   - Total model size: ~89.1 MB (embedding_model.ckpt: 79.46 MB + other files).
+- **Enhancement: Navigation UI Improvements**
+  - Added "議事録作成" (Minute Creation) button as the leftmost navigation item.
+  - Allows users to return to the minute creation screen from management screens (話者管理/プロンプト管理/設定).
+  - Implemented state preservation when switching between tabs.
+  - All tab components remain mounted and use CSS display property for show/hide.
+  - Users can now navigate between tabs without losing their work in progress.
 
 ## Pending Tasks
 - [x] Implement summary generation logic (Done via Azure OpenAI).
