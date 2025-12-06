@@ -23,16 +23,35 @@ interface ProcessingResult {
     id: string;
     transcript: string;
     segments: TranscriptSegment[];
-    summary: string;
+    summary?: string;
     speakers: string[];
     action_items?: string[];
     decisions?: string[];
+    [key: string]: any;  // カスタムフィールドを許可
 }
 
 const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+};
+
+const getSettings = () => {
+    const defaults = {
+        llmProvider: 'azure',
+        ollamaBaseUrl: 'http://localhost:11434/v1',
+        ollamaModel: 'llama3.1',
+        whisperProvider: 'azure',
+        whisperModel: 'gpt-4o',
+        ossWhisperModel: 'base'
+    };
+
+    try {
+        const stored = localStorage.getItem('minute-maker-settings');
+        return stored ? { ...defaults, ...JSON.parse(stored) } : defaults;
+    } catch {
+        return defaults;
+    }
 };
 
 export function MinuteGenerator() {
@@ -42,7 +61,6 @@ export function MinuteGenerator() {
     const [error, setError] = useState<string | null>(null);
     const [prompts, setPrompts] = useState<PromptPreset[]>([]);
     const [selectedPromptId, setSelectedPromptId] = useState<string>('standard');
-    const [selectedModel, setSelectedModel] = useState<'gpt-4o' | 'whisper'>('gpt-4o');
     const [mergedTranscript, setMergedTranscript] = useState<{ speaker: string; text: string }[]>([]);
     const [transcriptViewMode, setTranscriptViewMode] = useState<'structured' | 'text'>('structured');
     const [referenceFiles, setReferenceFiles] = useState<File[]>([]);
@@ -81,9 +99,17 @@ export function MinuteGenerator() {
         setState('uploading');
         setError(null);
 
+        const settings = getSettings();
         const formData = new FormData();
         formData.append('file', file);
-        formData.append('model', selectedModel);
+
+        // Send model selection based on settings
+        if (settings.whisperProvider === 'azure') {
+            formData.append('model', settings.whisperModel); // 'gpt-4o' or 'whisper'
+        } else {
+            formData.append('model', 'faster-whisper');
+            formData.append('oss_model', settings.ossWhisperModel);
+        }
 
         try {
             setState('processing'); // Combined transcribing/diarizing visual state
@@ -208,9 +234,7 @@ export function MinuteGenerator() {
             const summaryData = await response.json();
             setResult({
                 ...result,
-                summary: summaryData.summary,
-                action_items: summaryData.action_items,
-                decisions: summaryData.decisions
+                ...summaryData  // すべてのフィールドを含める（カスタムフィールド含む）
             });
             setState('completed');
         } catch (err) {
@@ -267,7 +291,14 @@ export function MinuteGenerator() {
                     summary: result.summary || '',
                     decisions: result.decisions || [],
                     action_items: result.action_items || [],
-                    segments: result.segments
+                    segments: result.segments,
+                    // カスタムフィールドも含める
+                    ...Object.keys(result).reduce((acc, key) => {
+                        if (!['id', 'transcript', 'segments', 'summary', 'speakers', 'action_items', 'decisions'].includes(key)) {
+                            acc[key] = result[key];
+                        }
+                        return acc;
+                    }, {} as Record<string, any>)
                 }),
             });
 
@@ -356,36 +387,6 @@ export function MinuteGenerator() {
                         <p className="text-secondary mt-4">または クリックして選択</p>
                         <p className="text-sm text-secondary mt-2 mb-6">MP3, WAV, MP4, M4A 対応</p>
 
-                        <div className="model-select-group bg-secondary p-4 rounded-lg border border-border inline-flex flex-col gap-2 mb-4 text-left">
-                            <label className="text-xs text-secondary font-medium">使用モデルを選択</label>
-                            <div className="flex gap-4">
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="radio"
-                                        name="model"
-                                        value="gpt-4o"
-                                        checked={selectedModel === 'gpt-4o'}
-                                        onChange={() => setSelectedModel('gpt-4o')}
-                                    />
-                                    <span className="text-sm font-medium">High Quality (GPT-4o)</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="radio"
-                                        name="model"
-                                        value="whisper"
-                                        checked={selectedModel === 'whisper'}
-                                        onChange={() => setSelectedModel('whisper')}
-                                    />
-                                    <span className="text-sm font-medium">Standard (Whisper)</span>
-                                </label>
-                            </div>
-                            <p className="text-xs text-secondary mt-1">
-                                {selectedModel === 'gpt-4o'
-                                    ? "高精度な文字起こしと話者識別が可能です。"
-                                    : "より高速ですが、話者識別機能は制限されます。"}
-                            </p>
-                        </div>
 
                         {file && (
                             <button
@@ -673,10 +674,14 @@ export function MinuteGenerator() {
                                 </div>
 
                                 <div className="summary-section animate-fade-in">
-                                    <h4>概要</h4>
-                                    <div className="summary-box mb-4">
-                                        {result.summary}
-                                    </div>
+                                    {result.summary && (
+                                        <>
+                                            <h4>概要</h4>
+                                            <div className="summary-box mb-4">
+                                                {result.summary}
+                                            </div>
+                                        </>
+                                    )}
 
                                     {(result.decisions && result.decisions.length > 0) && (
                                         <>
@@ -695,6 +700,33 @@ export function MinuteGenerator() {
                                             </ul>
                                         </>
                                     )}
+
+                                    {/* カスタムフィールドを動的に表示 */}
+                                    {Object.keys(result)
+                                        .filter(key => !['id', 'transcript', 'segments', 'summary', 'speakers', 'action_items', 'decisions'].includes(key))
+                                        .sort()  // アルファベット順に表示
+                                        .map(key => {
+                                            const value = result[key];
+                                            // null, undefined, 空配列, 空文字列はスキップ
+                                            if (value === null || value === undefined) return null;
+                                            if (Array.isArray(value) && value.length === 0) return null;
+                                            if (typeof value === 'string' && value.trim() === '') return null;
+
+                                            return (
+                                                <div key={key} className="mt-4">
+                                                    <h4>{key}</h4>
+                                                    {Array.isArray(value) ? (
+                                                        <ul className="summary-list">
+                                                            {value.map((item, idx) => <li key={idx}>{item}</li>)}
+                                                        </ul>
+                                                    ) : (
+                                                        <div className="summary-box mb-4">
+                                                            {String(value)}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
                                 </div>
                             </div>
                         )}

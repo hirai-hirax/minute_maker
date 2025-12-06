@@ -2,13 +2,14 @@ import { useState } from 'react'
 import { MinuteGenerator } from './components/MinuteGenerator'
 import { SpeakerManager } from './components/SpeakerManager'
 import { Settings } from './components/Settings'
-import { Layout, Plus, List, Users, Settings as SettingsIcon } from 'lucide-react'
+import { PromptManager } from './components/PromptManager'
+import { Layout, Plus, List, Users, Settings as SettingsIcon, FileText } from 'lucide-react'
 import './App.css'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'generate' | 'speakers' | 'settings'>('generate')
+  const [activeTab, setActiveTab] = useState<'generate' | 'speakers' | 'settings' | 'prompts'>('generate')
   const [resetKey, setResetKey] = useState(0)
 
   const handleLogoClick = () => {
@@ -35,11 +36,25 @@ function App() {
           </div>
           <nav className="nav-tabs">
             <button
+              className={`nav-btn ${activeTab === 'generate' ? 'active' : ''}`}
+              onClick={() => setActiveTab('generate')}
+            >
+              <Plus size={16} />
+              議事録作成
+            </button>
+            <button
               className={`nav-btn ${activeTab === 'speakers' ? 'active' : ''}`}
               onClick={() => setActiveTab('speakers')}
             >
               <Users size={16} />
               話者管理
+            </button>
+            <button
+              className={`nav-btn ${activeTab === 'prompts' ? 'active' : ''}`}
+              onClick={() => setActiveTab('prompts')}
+            >
+              <FileText size={16} />
+              プロンプト管理
             </button>
             <button
               className={`nav-btn ${activeTab === 'settings' ? 'active' : ''}`}
@@ -53,19 +68,18 @@ function App() {
       </header>
 
       <main className="container main-content">
-        {activeTab === 'generate' ? (
-          <div className="content-wrapper">
-            <MinuteGenerator key={resetKey} />
-          </div>
-        ) : activeTab === 'settings' ? (
-          <div className="content-wrapper">
-            <Settings />
-          </div>
-        ) : (
-          <div className="content-wrapper">
-            <SpeakerManager />
-          </div>
-        )}
+        <div className="content-wrapper" style={{ display: activeTab === 'generate' ? 'block' : 'none' }}>
+          <MinuteGenerator key={resetKey} />
+        </div>
+        <div className="content-wrapper" style={{ display: activeTab === 'speakers' ? 'block' : 'none' }}>
+          <SpeakerManager />
+        </div>
+        <div className="content-wrapper" style={{ display: activeTab === 'prompts' ? 'block' : 'none' }}>
+          <PromptManager />
+        </div>
+        <div className="content-wrapper" style={{ display: activeTab === 'settings' ? 'block' : 'none' }}>
+          <Settings />
+        </div>
       </main>
     </div>
   )

@@ -4,7 +4,7 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 import os
 import logging
 import tempfile
@@ -90,26 +90,66 @@ OSS_WHISPER_DEVICE = os.environ.get("OSS_WHISPER_DEVICE", "cpu")  # cpu or cuda
 # Directory Setup
 BASE_DIR = Path(__file__).resolve().parent.parent
 SPEAKERS_DIR = BASE_DIR / "data" / "speakers"
+DATA_DIR = BASE_DIR / "data"
+PROMPTS_FILE = DATA_DIR / "prompts.json"
 
 SPEAKERS_DIR.mkdir(parents=True, exist_ok=True)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-PROMPTS_DATA = {
+# Default prompts (cannot be edited or deleted)
+DEFAULT_PROMPTS = {
     "standard": {
+        "id": "standard",
         "name": "標準校正",
         "description": "バランスの取れた標準的な要約・校正",
-        "system_prompt": "あなたは議事録作成の専門家です。以下の会議の文字起こしテキストを読み、要約、決定事項、アクションアイテムを抽出してください。\n\n出力はJSON形式で、以下のキーを含めてください:\n- summary: 会議の要約\n- decisions: 決定事項のリスト\n- action_items: アクションアイテムのリスト"
+        "system_prompt": "あなたは議事録作成の専門家です。以下の会議の文字起こしテキストを読み、要約、決定事項、アクションアイテムを抽出してください。\n\n出力はJSON形式で、以下のキーを含めてください:\n- summary: 会議の要約\n- decisions: 決定事項のリスト\n- action_items: アクションアイテムのリスト",
+        "is_default": True
     },
     "detailed": {
+        "id": "detailed",
         "name": "詳細",
         "description": "詳細な分析と背景情報を含む要約",
-        "system_prompt": "あなたは議事録作成の専門家です。以下の文字起こしを詳細に分析し、背景情報、議論の経緯を含めて要約してください。\n\n出力はJSON形式で、以下のキーを含めてください:\n- summary: 詳細な要約（背景含む）\n- decisions: 決定事項（経緯含む）\n- action_items: アクションアイテム（担当者明確化）"
+        "system_prompt": "あなたは議事録作成の専門家です。以下の文字起こしを詳細に分析し、背景情報、議論の経緯を含めて要約してください。\n\n出力はJSON形式で、以下のキーを含めてください:\n- summary: 詳細な要約（背景含む）\n- decisions: 決定事項（経緯含む）\n- action_items: アクションアイテム（担当者明確化）",
+        "is_default": True
     },
     "simple": {
+        "id": "simple",
         "name": "簡潔",
         "description": "要点のみを箇条書きで",
-        "system_prompt": "あなたは議事録作成の専門家です。以下の文字起こしから、要点のみを極めて簡潔に抽出してください。\n\n出力はJSON形式で、以下のキーを含めてください:\n- summary: 超簡潔な要約（3行以内）\n- decisions: 決定事項の箇条書き\n- action_items: アクションアイテムの箇条書き"
+        "system_prompt": "あなたは議事録作成の専門家です。以下の文字起こしから、要点のみを極めて簡潔に抽出してください。\n\n出力はJSON形式で、以下のキーを含めてください:\n- summary: 超簡潔な要約（3行以内）\n- decisions: 決定事項の箇条書き\n- action_items: アクションアイテムの箇条書き",
+        "is_default": True
     }
 }
+
+# Global prompts data (default + custom)
+PROMPTS_DATA = {}
+
+def load_prompts():
+    """Load prompts from JSON file, merging with defaults"""
+    global PROMPTS_DATA
+    PROMPTS_DATA = DEFAULT_PROMPTS.copy()
+    
+    if PROMPTS_FILE.exists():
+        try:
+            with open(PROMPTS_FILE, 'r', encoding='utf-8') as f:
+                custom_prompts = json.load(f)
+                PROMPTS_DATA.update(custom_prompts)
+            logger.info(f"Loaded {len(custom_prompts)} custom prompts")
+        except Exception as e:
+            logger.error(f"Failed to load custom prompts: {e}")
+    else:
+        logger.info("No custom prompts file found, using defaults only")
+
+def save_custom_prompts():
+    """Save only custom prompts to JSON file"""
+    custom_prompts = {k: v for k, v in PROMPTS_DATA.items() if not v.get("is_default", False)}
+    try:
+        with open(PROMPTS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(custom_prompts, f, ensure_ascii=False, indent=2)
+        logger.info(f"Saved {len(custom_prompts)} custom prompts")
+    except Exception as e:
+        logger.error(f"Failed to save custom prompts: {e}")
+        raise
 
 
 # Chat model name - determined by provider
@@ -144,6 +184,10 @@ app.add_middleware(
 async def startup_event():
     """Pre-load models on startup to catch errors early"""
     try:
+        logger.info("Loading prompts...")
+        load_prompts()
+        logger.info(f"Loaded {len(PROMPTS_DATA)} prompts")
+        
         logger.info("Pre-loading speaker encoder on startup...")
         load_speaker_encoder()
         logger.info("Speaker encoder ready!")
@@ -156,6 +200,7 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Failed to pre-load models: {e}")
         logger.warning("Server will continue, but some features may not work")
+
 
 
 _minutes: List[Minute] = [
@@ -948,16 +993,109 @@ class SummarizeRequest(BaseModel):
     ollama_model: Optional[str] = None  # Ollama model name
 
 class SummarizeResponse(BaseModel):
-    summary: str
-    action_items: List[str]
-    decisions: List[str]
+    # 基本フィールド(後方互換性のため保持)
+    summary: Optional[str] = None
+    action_items: Optional[List[str]] = None
+    decisions: Optional[List[str]] = None
+    
+    # 任意のカスタムフィールドを許可
+    model_config = ConfigDict(extra='allow')
 
 @app.get("/api/prompts", summary="Get available prompt presets")
 async def get_prompts():
     return [
-        {"id": k, "name": v["name"], "description": v["description"]}
+        {
+            "id": k, 
+            "name": v["name"], 
+            "description": v["description"],
+            "system_prompt": v["system_prompt"],
+            "is_default": v.get("is_default", False)
+        }
         for k, v in PROMPTS_DATA.items()
     ]
+
+class PromptCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    description: str = Field(..., min_length=1, max_length=200)
+    system_prompt: str = Field(..., min_length=1)
+
+class PromptUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    description: Optional[str] = Field(None, min_length=1, max_length=200)
+    system_prompt: Optional[str] = Field(None, min_length=1)
+
+@app.post("/api/prompts", summary="Create a new custom prompt")
+async def create_prompt(prompt: PromptCreate):
+    # Generate unique ID
+    prompt_id = f"custom_{str(uuid4())[:8]}"
+    
+    # Ensure uniqueness
+    while prompt_id in PROMPTS_DATA:
+        prompt_id = f"custom_{str(uuid4())[:8]}"
+    
+    # Add to data
+    PROMPTS_DATA[prompt_id] = {
+        "id": prompt_id,
+        "name": prompt.name,
+        "description": prompt.description,
+        "system_prompt": prompt.system_prompt,
+        "is_default": False
+    }
+    
+    # Save to file
+    try:
+        save_custom_prompts()
+        return {"message": "Prompt created successfully", "id": prompt_id}
+    except Exception as e:
+        # Rollback
+        del PROMPTS_DATA[prompt_id]
+        raise HTTPException(status_code=500, detail=f"Failed to save prompt: {str(e)}")
+
+@app.put("/api/prompts/{prompt_id}", summary="Update a custom prompt")
+async def update_prompt(prompt_id: str, prompt: PromptUpdate):
+    # Check if prompt exists
+    if prompt_id not in PROMPTS_DATA:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+    
+    # Check if it's a default prompt
+    if PROMPTS_DATA[prompt_id].get("is_default", False):
+        raise HTTPException(status_code=403, detail="Cannot edit default prompts")
+    
+    # Update fields
+    if prompt.name is not None:
+        PROMPTS_DATA[prompt_id]["name"] = prompt.name
+    if prompt.description is not None:
+        PROMPTS_DATA[prompt_id]["description"] = prompt.description
+    if prompt.system_prompt is not None:
+        PROMPTS_DATA[prompt_id]["system_prompt"] = prompt.system_prompt
+    
+    # Save to file
+    try:
+        save_custom_prompts()
+        return {"message": "Prompt updated successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save prompt: {str(e)}")
+
+@app.delete("/api/prompts/{prompt_id}", summary="Delete a custom prompt")
+async def delete_prompt(prompt_id: str):
+    # Check if prompt exists
+    if prompt_id not in PROMPTS_DATA:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+    
+    # Check if it's a default prompt
+    if PROMPTS_DATA[prompt_id].get("is_default", False):
+        raise HTTPException(status_code=403, detail="Cannot delete default prompts")
+    
+    # Delete from data
+    del PROMPTS_DATA[prompt_id]
+    
+    # Save to file
+    try:
+        save_custom_prompts()
+        return {"message": "Prompt deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save prompts: {str(e)}")
+
 
 @app.post("/api/generate_summary", response_model=SummarizeResponse, summary="Generate summary from transcript")
 async def generate_summary(
@@ -1037,48 +1175,59 @@ async def generate_summary(
         
         content = completion.choices[0].message.content
 
-        data = json.loads(content)
+        # Normalize all fields from LLM response
+        llm_data = json.loads(content)
         
-        # Normalize action_items - handle both list of strings and list of dicts
-        action_items_raw = data.get("action_items", [])
-        action_items = []
-        if isinstance(action_items_raw, list):
-            for item in action_items_raw:
-                if isinstance(item, dict):
-                    # If it's a dict, try to extract 'task' or concatenate values
-                    if "task" in item:
-                        action_items.append(item["task"])
+        # Helper function to normalize list fields
+        def normalize_list_field(field_value):
+            """Normalize various list formats to List[str]"""
+            result = []
+            if isinstance(field_value, list):
+                for item in field_value:
+                    if isinstance(item, dict):
+                        # Extract meaningful value from dict
+                        if len(item) == 1:
+                            result.append(str(list(item.values())[0]))
+                        else:
+                            result.append(" ".join(str(v) for v in item.values()))
+                    elif isinstance(item, str):
+                        result.append(item)
                     else:
-                        # Concatenate all values in the dict
-                        action_items.append(" ".join(str(v) for v in item.values()))
-                elif isinstance(item, str):
-                    action_items.append(item)
+                        result.append(str(item))
+            elif isinstance(field_value, str):
+                # Split by newlines if multi-line
+                if "\n" in field_value:
+                    result = [line.strip() for line in field_value.split("\n") if line.strip()]
+                else:
+                    result = [field_value]
+            return result
         
-        # Normalize decisions - handle both string and list
-        decisions_raw = data.get("decisions", [])
-        decisions = []
-        if isinstance(decisions_raw, str):
-            # If it's a single string, split by newlines or use as-is
-            if "\n" in decisions_raw:
-                decisions = [d.strip() for d in decisions_raw.split("\n") if d.strip()]
+        # Prepare response data
+        response_data = {}
+        
+        # Process standard fields
+        if "summary" in llm_data:
+            response_data["summary"] = llm_data.pop("summary")
+        
+        if "action_items" in llm_data:
+            response_data["action_items"] = normalize_list_field(llm_data.pop("action_items"))
+        
+        if "decisions" in llm_data:
+            response_data["decisions"] = normalize_list_field(llm_data.pop("decisions"))
+        
+        # Add all remaining fields as custom fields (dynamic)
+        for key, value in llm_data.items():
+            if isinstance(value, list):
+                response_data[key] = normalize_list_field(value)
+            elif isinstance(value, str):
+                response_data[key] = value
+            elif isinstance(value, dict):
+                # Convert dict to string representation
+                response_data[key] = json.dumps(value, ensure_ascii=False)
             else:
-                decisions = [decisions_raw]
-        elif isinstance(decisions_raw, list):
-            for item in decisions_raw:
-                if isinstance(item, dict):
-                    # Similar handling as action_items
-                    if "decision" in item:
-                        decisions.append(item["decision"])
-                    else:
-                        decisions.append(" ".join(str(v) for v in item.values()))
-                elif isinstance(item, str):
-                    decisions.append(item)
+                response_data[key] = str(value)
         
-        return SummarizeResponse(
-            summary=data.get("summary", ""),
-            action_items=action_items,
-            decisions=decisions
-        )
+        return SummarizeResponse(**response_data)
     except Exception as e:
         logger.error(f"Summarization failed: {e}")
         # Fallback if JSON parsing fails or model fails
@@ -1095,16 +1244,53 @@ async def generate_summary(
 
 class DownloadRequest(BaseModel):
     title: str
-    summary: str
-    decisions: List[str]
-    action_items: List[str]
+    summary: Optional[str] = None
+    decisions: Optional[List[str]] = None
+    action_items: Optional[List[str]] = None
     segments: List[TranscriptSegment]
+    
+    # \u30ab\u30b9\u30bf\u30e0\u30d5\u30a3\u30fc\u30eb\u30c9\u3092\u8a31\u53ef
+    model_config = ConfigDict(extra='allow')
 
 
 def _generate_docx(data: DownloadRequest) -> BytesIO:
     """Generate a Word document from minute data (mojiokoshi7.py準拠)"""
+    from datetime import datetime
+    
     doc = DocxDocument()
+    
+    # タイトル
     doc.add_heading('議事録', 0)
+    doc.add_heading(data.title, level=1)
+    
+    # 作成日時
+    creation_time = datetime.now().strftime('%Y年%m月%d日 %H:%M')
+    doc.add_paragraph(f'作成日時: {creation_time}')
+    doc.add_paragraph('')  # 空行
+    
+    # 統計情報
+    doc.add_heading('統計情報', level=1)
+    stats_lines = [
+        f'総セグメント数: {len(data.segments)}件',
+        f'決定事項: {len(data.decisions)}件',
+        f'アクションアイテム: {len(data.action_items)}件',
+    ]
+    
+    # 話者数をカウント
+    speakers = set(seg.speaker for seg in data.segments if seg.speaker)
+    if speakers:
+        stats_lines.append(f'話者数: {len(speakers)}名')
+    
+    # 総時間を計算
+    if data.segments:
+        total_duration = max(seg.end for seg in data.segments)
+        minutes = int(total_duration // 60)
+        seconds = int(total_duration % 60)
+        stats_lines.append(f'総時間: {minutes}分{seconds}秒')
+    
+    for stat in stats_lines:
+        doc.add_paragraph(stat, style='List Bullet')
+    doc.add_paragraph('')  # 空行
     
     # 要約セクション
     if data.summary:
@@ -1115,15 +1301,15 @@ def _generate_docx(data: DownloadRequest) -> BytesIO:
     # 決定事項セクション
     if data.decisions:
         doc.add_heading('決定事項', level=1)
-        for decision in data.decisions:
-            doc.add_paragraph(decision, style='List Bullet')
+        for i, decision in enumerate(data.decisions, 1):
+            doc.add_paragraph(f'{i}. {decision}', style='List Number')
         doc.add_paragraph('')  # 空行
     
     # アクションアイテムセクション
     if data.action_items:
         doc.add_heading('アクションアイテム', level=1)
-        for action in data.action_items:
-            doc.add_paragraph(action, style='List Bullet')
+        for i, action in enumerate(data.action_items, 1):
+            doc.add_paragraph(f'{i}. {action}', style='List Number')
         doc.add_paragraph('')  # 空行
     
     # 文字起こし詳細セクション（mojiokoshi7.py形式）
@@ -1134,6 +1320,8 @@ def _generate_docx(data: DownloadRequest) -> BytesIO:
         merged_segments = []
         current_speaker = None
         current_texts = []
+        current_start = None
+        current_end = None
         
         for seg in data.segments:
             speaker = seg.speaker if seg.speaker else "不明"
@@ -1142,25 +1330,59 @@ def _generate_docx(data: DownloadRequest) -> BytesIO:
                 if current_texts:
                     merged_segments.append({
                         "speaker": current_speaker,
-                        "text": " ".join(current_texts)
+                        "text": " ".join(current_texts),
+                        "start": current_start,
+                        "end": current_end
                     })
                 current_speaker = speaker
                 current_texts = [seg.text]
+                current_start = seg.start
+                current_end = seg.end
             else:
                 current_texts.append(seg.text)
+                current_end = seg.end  # 継続的に終了時刻を更新
         
         # 最後のグループを追加
         if current_texts:
             merged_segments.append({
                 "speaker": current_speaker,
-                "text": " ".join(current_texts)
+                "text": " ".join(current_texts),
+                "start": current_start,
+                "end": current_end
             })
         
-        # 形式: （話者）テキスト内容
+        # 形式: [開始時刻-終了時刻]（話者）テキスト内容
         for merged in merged_segments:
             speaker = merged["speaker"]
             text = merged["text"]
-            doc.add_paragraph(f"（{speaker}）{text}")
+            start_time = f"{int(merged['start']//60):02d}:{int(merged['start']%60):02d}"
+            end_time = f"{int(merged['end']//60):02d}:{int(merged['end']%60):02d}"
+            doc.add_paragraph(f"[{start_time}-{end_time}]（{speaker}）{text}")
+    
+    # カスタムフィールド(動的)
+    # Pydantic extra='allow'で追加されたフィールドを処理
+    custom_fields = {}
+    if hasattr(data, '__pydantic_extra__'):
+        custom_fields = data.__pydantic_extra__ or {}
+    
+    # 標準フィールド以外を表示
+    standard_fields = {'title', 'summary', 'decisions', 'action_items', 'segments'}
+    for field_name, field_value in custom_fields.items():
+        if field_name in standard_fields:
+            continue
+        
+        # フィールド名を見出しに
+        doc.add_heading(field_name, level=1)
+        
+        if isinstance(field_value, list):
+            # リスト型: 番号付きリスト
+            for i, item in enumerate(field_value, 1):
+                doc.add_paragraph(f'{i}. {item}', style='List Number')
+        else:
+            # 文字列型: そのまま表示
+            doc.add_paragraph(str(field_value))
+        
+        doc.add_paragraph('')  # 空行
     
     # BytesIOに保存
     buffer = BytesIO()
@@ -1171,35 +1393,112 @@ def _generate_docx(data: DownloadRequest) -> BytesIO:
 
 def _generate_xlsx(data: DownloadRequest) -> BytesIO:
     """Generate an Excel document from minute data (mojiokoshi7.py準拠)"""
+    from datetime import datetime
+    
     buffer = BytesIO()
     
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        # シート1: 要約（optional）
+        # シート1: メタデータ
+        metadata = [
+            {'項目': 'タイトル', '値': data.title},
+            {'項目': '作成日時', '値': datetime.now().strftime('%Y年%m月%d日 %H:%M')},
+            {'項目': '総セグメント数', '値': f'{len(data.segments)}件'},
+            {'項目': '決定事項数', '値': f'{len(data.decisions)}件'},
+            {'項目': 'アクションアイテム数', '値': f'{len(data.action_items)}件'},
+        ]
+        
+        # 話者数を追加
+        speakers = set(seg.speaker for seg in data.segments if seg.speaker)
+        if speakers:
+            metadata.append({'項目': '話者数', '値': f'{len(speakers)}名'})
+            metadata.append({'項目': '話者一覧', '値': ', '.join(sorted(speakers))})
+        
+        # 総時間を追加
+        if data.segments:
+            total_duration = max(seg.end for seg in data.segments)
+            minutes = int(total_duration // 60)
+            seconds = int(total_duration % 60)
+            metadata.append({'項目': '総時間', '値': f'{minutes}分{seconds}秒'})
+        
+        metadata_df = pd.DataFrame(metadata)
+        metadata_df.to_excel(writer, index=False, sheet_name='メタデータ')
+        
+        # シート2: 要約
         summary_data = []
         if data.summary:
-            summary_data.append({'カテゴリ': '概要', '内容': data.summary})
-        for decision in data.decisions:
-            summary_data.append({'カテゴリ': '決定事項', '内容': decision})
-        for action in data.action_items:
-            summary_data.append({'カテゴリ': 'アクションアイテム', '内容': action})
+            # 要約を複数行に分割
+            summary_lines = data.summary.split('\n')
+            for line in summary_lines:
+                if line.strip():
+                    summary_data.append({'カテゴリ': '概要', '内容': line.strip()})
         
         if summary_data:
             summary_df = pd.DataFrame(summary_data)
-            summary_df.to_excel(writer, index=False, sheet_name='サマリー')
+            summary_df.to_excel(writer, index=False, sheet_name='概要')
         
-        # シート2: 文字起こし詳細（mojiokoshi7.py形式）
+        # シート3: 決定事項
+        if data.decisions:
+            decisions_data = [
+                {'No': i+1, '決定事項': decision}
+                for i, decision in enumerate(data.decisions)
+            ]
+            decisions_df = pd.DataFrame(decisions_data)
+            decisions_df.to_excel(writer, index=False, sheet_name='決定事項')
+        
+        # シート4: アクションアイテム
+        if data.action_items:
+            actions_data = [
+                {'No': i+1, 'アクションアイテム': action}
+                for i, action in enumerate(data.action_items)
+            ]
+            actions_df = pd.DataFrame(actions_data)
+            actions_df.to_excel(writer, index=False, sheet_name='アクションアイテム')
+        
+        # シート5: 文字起こし詳細（mojiokoshi7.py形式）
         if data.segments:
             transcript_data = []
-            for seg in data.segments:
+            for i, seg in enumerate(data.segments, 1):
+                start_time = f"{int(seg.start//60):02d}:{int(seg.start%60):02d}"
+                end_time = f"{int(seg.end//60):02d}:{int(seg.end%60):02d}"
                 transcript_data.append({
-                    '開始時刻': seg.start,
-                    '終了時刻': seg.end,
+                    'No': i,
+                    '開始時刻': start_time,
+                    '終了時刻': end_time,
+                    '継続時間(秒)': round(seg.end - seg.start, 2),
                     '話者': seg.speaker if seg.speaker else "不明",
                     '内容': seg.text
                 })
             
             transcript_df = pd.DataFrame(transcript_data)
             transcript_df.to_excel(writer, index=False, sheet_name='文字起こし')
+        
+        # カスタムフィールド(動的にシートを追加)
+        custom_fields = {}
+        if hasattr(data, '__pydantic_extra__'):
+            custom_fields = data.__pydantic_extra__ or {}
+        
+        standard_fields = {'title', 'summary', 'decisions', 'action_items', 'segments'}
+        for field_name, field_value in custom_fields.items():
+            if field_name in standard_fields:
+                continue
+            
+            # シート名(Excelの制限で最大31文字)
+            sheet_name = field_name[:31]
+            
+            if isinstance(field_value, list):
+                # リスト型: Noと内容の2カラムテーブル
+                custom_df = pd.DataFrame({
+                    'No': range(1, len(field_value) + 1),
+                    field_name: field_value
+                })
+                custom_df.to_excel(writer, index=False, sheet_name=sheet_name)
+            else:
+                # 文字列型: キーと値の2カラム
+                custom_df = pd.DataFrame({
+                    '項目': [field_name],
+                    '値': [str(field_value)]
+                })
+                custom_df.to_excel(writer, index=False, sheet_name=sheet_name)
     
     buffer.seek(0)
     return buffer
