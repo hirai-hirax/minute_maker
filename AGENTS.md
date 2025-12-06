@@ -2,7 +2,7 @@
 
 ## Current Status
 - **Date**: 2025-12-05
-- **Latest Feature**: Speaker Registration and Identification
+- **Latest Feature**: Workflow Navigation & App Reset
 - **Build Status**: Stable
 
 ## Recent Accomplishments
@@ -39,3 +39,7 @@
 - **Feature: Workflow Navigation**
   - Implemented clickable progress steps to jump between "Review", "Summarize Setup", and "Completed" screens.
   - Added state validation logic to prevent invalid navigation.
+- **Enhancement: UX & Reset Flow**
+  - Added functionality to reset the application (return to file upload) by clicking the "Transcription" step or the App Logo.
+  - Implemented confirmation dialogs to prevent accidental data loss when resetting.
+  - Fixed logic to allow viewing transcription results (`reviewing` state) when clicking the "Processing" step.
