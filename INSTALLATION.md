@@ -1,10 +1,92 @@
-# minute_maker - 必要なライブラリのインストール
+# minute_maker - インストールガイド
+
+## 前提条件
+
+- **Python**: 3.12 以降
+- **Node.js**: 18 以降
+- **uv**: Python パッケージマネージャー ([インストール方法](https://github.com/astral-sh/uv))
+
+## インストール手順
+
+### 1. リポジトリのクローン
+
+```bash
+git clone <repository-url>
+cd minute_maker
+```
+
+### 2. バックエンドのセットアップ
+
+#### 2.1 Python環境の初期化
+
+```bash
+# プロジェクトの初期化とPythonバージョンの固定
+uv init --no-workspace
+uv python pin 3.12
+
+# 必要なライブラリのインストール
+uv sync
+```
+
+#### 2.2 環境変数の設定
+
+`.env`ファイルをプロジェクトルートに作成し、以下の環境変数を設定してください:
+
+```env
+AZURE_OPENAI_ENDPOINT=your_endpoint_here
+AZURE_OPENAI_API_KEY=your_api_key_here
+```
+
+#### 2.3 SpeechBrain モデルのダウンロード（必須）
+
+**重要**: 話者認識機能を使用するには、事前にSpeechBrainモデルをダウンロードする必要があります。
+
+```bash
+# モデルダウンロードスクリプトを実行
+uv run python download_model.py
+```
+
+このコマンドは以下を実行します:
+- Hugging Faceから`speechbrain/spkrec-ecapa-voxceleb`モデルをダウンロード
+- `backend/tmp_model/`ディレクトリに保存（約89.1 MB）
+- 必要なファイル:
+  - `embedding_model.ckpt` (79.46 MB)
+  - `classifier.ckpt` (5.28 MB)
+  - `label_encoder.txt` (0.12 MB)
+  - その他の設定ファイル
+
+**注意**: ダウンロードには数分かかる場合があります。インターネット接続が必要です。
+
+#### 2.4 バックエンドサーバーの起動
+
+```bash
+uv run uvicorn backend.app.main:app --reload
+```
+
+サーバーは `http://localhost:8000` で起動します。
+
+### 3. フロントエンドのセットアップ
+
+#### 3.1 依存関係のインストール
+
+```bash
+cd frontend
+npm install
+```
+
+#### 3.2 開発サーバーの起動
+
+```bash
+npm run dev -- --host
+```
+
+フロントエンドは `http://localhost:5173` で起動します。
 
 ## インストール済みライブラリ
 
-uvを使用して以下のライブラリをインストールしました:
+### バックエンド（Python）
 
-### コアライブラリ
+#### コアライブラリ
 - ✅ **pymupdf** (fitz) - PDFファイルの読み込み
 - ✅ **pandas** - データフレーム操作
 - ✅ **torch** - PyTorch (機械学習フレームワーク)
@@ -16,57 +98,136 @@ uvを使用して以下のライブラリをインストールしました:
 - ✅ **python-pptx** - PowerPoint文書の読み込み
 - ✅ **extract-msg** - Outlookメッセージファイルの読み込み
 
-### SpeechBrainについて
-✅ **speechbrain** - 話者認識用ライブラリ
+#### SpeechBrainについて
+- ✅ **speechbrain** - 話者認識用ライブラリ
+- ✅ **huggingface-hub** - モデルダウンロード用
 
-Python 3.12 と以下のライブラリの組み合わせで正常に動作します：
+Python 3.12 と以下のライブラリの組み合わせで正常に動作します:
 - `torchaudio==2.5.1`
 - `soundfile` (バックエンドとして必須)
 - `requests` (依存関係として必須)
 
-プロジェクトの設定ファイル (`.python-version` と `pyproject.toml`) でこれらは適切に設定されています。
+### フロントエンド（Node.js）
+- React 18
+- TypeScript
+- Vite
+- Lucide React (アイコン)
 
-## インストールコマンド
+## API エンドポイント
 
-```bash
-# プロジェクトの初期化とPythonバージョンの固定
-uv init --no-workspace
-uv python pin 3.12
+バックエンドサーバー起動後、以下のエンドポイントが利用可能です:
 
-# 必要なライブラリのインストール
-uv sync
-```
+- **ヘルスチェック**: `GET /`
+- **議事録一覧・登録**: `GET/POST /api/minutes`
+- **議事録詳細**: `GET /api/minutes/{id}`
+- **音声処理**: `POST /api/process_audio`
+- **話者登録**: `POST /api/register_speaker`
+- **話者一覧**: `GET /api/speakers`
+- **話者追加**: `POST /api/speakers`
+- **話者削除**: `DELETE /api/speakers/{name}`
+- **話者埋め込み生成**: `POST /api/create_speaker_embedding`
+- **要約プロンプト一覧**: `GET /api/prompts`
+- **要約生成**: `POST /api/generate_summary`
+- **議事録ダウンロード**: `GET /api/minutes/{id}/download?format=docx|xlsx`
 
-## 使用方法
-
-```bash
-# 仮想環境でPythonスクリプトを実行
-uv run python mojiokoshi6.py transcribe audio.mp3 --output result.json
-
-# 要約の生成
-uv run python mojiokoshi6.py summary result.json --model gpt-4 --prompt "以下の文字起こしを要約してください"
-
-# 動画から音声を抽出
-uv run python mojiokoshi6.py video-to-audio video.mp4 --output audio.mp3
-```
-
-## 環境変数
-
-`.env`ファイルに以下の環境変数を設定してください:
-
-```
-AZURE_OPENAI_ENDPOINT=your_endpoint_here
-AZURE_OPENAI_API_KEY=your_api_key_here
-```
+Swagger UIドキュメント: `http://localhost:8000/docs`
 
 ## トラブルシューティング
 
-### SpeechBrainのインポートエラー
+### SpeechBrainモデルのダウンロードに失敗する場合
 
-話者認識機能を使用しない場合は、`mojiokoshi6.py`から以下の行をコメントアウトできます:
+1. **インターネット接続を確認**
+   ```bash
+   ping huggingface.co
+   ```
 
-```python
-# from speechbrain.pretrained import EncoderClassifier
+2. **huggingface-hubを最新版にアップデート**
+   ```bash
+   uv add --upgrade huggingface-hub
+   ```
+
+3. **プロキシ設定を確認**
+   ```bash
+   # プロキシ環境変数を設定
+   export HTTP_PROXY=http://proxy.example.com:8080
+   export HTTPS_PROXY=http://proxy.example.com:8080
+   ```
+
+4. **手動でモデルファイルをダウンロード**
+   - [Hugging Face](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb)からファイルをブラウザでダウンロード
+   - `backend/tmp_model/`ディレクトリに配置
+
+### torchaudioのインポートエラー
+
+torchaudioのバージョンが `2.5.1` であることを確認してください:
+
+```bash
+uv run python -c "import torchaudio; print(torchaudio.__version__)"
 ```
 
-そして、`load_speaker_encoder()`および`_compute_embedding_from_wav_bytes()`関数を使用しないようにしてください。
+### 話者認識機能を使用しない場合
+
+話者認識機能を使わない場合は、モデルダウンロード（ステップ 2.3）をスキップできます。
+ただし、以下の機能は使用できなくなります:
+- 話者識別
+- 話者登録
+- 話者埋め込みファイルの生成
+
+## 本番環境へのデプロイ
+
+### フロントエンド
+
+```bash
+cd frontend
+npm run build
+```
+
+ビルドされたファイルは `frontend/dist/` に出力されます。
+
+### バックエンド
+
+任意のASGIサーバーでホストします:
+
+```bash
+uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+```
+
+または、Gunicorn + Uvicorn workers:
+
+```bash
+gunicorn backend.app.main:app -w 4 -k uvicorn.workers.UvicornWorker
+```
+
+## ディレクトリ構成
+
+```
+minute_maker/
+├── backend/
+│   ├── app/
+│   │   ├── main.py                    # FastAPI アプリケーション
+│   │   └── tests/                     # バックエンドテスト
+│   ├── data/
+│   │   ├── uploads/                   # アップロードされた音声ファイル
+│   │   └── speakers/                  # 登録済み話者の埋め込みファイル
+│   ├── tmp_model/                     # SpeechBrainモデルファイル（ダウンロード先）
+│   └── requirements.txt               # Python依存関係
+├── frontend/
+│   ├── src/
+│   │   ├── components/                # Reactコンポーネント
+│   │   ├── App.tsx                    # メインアプリケーション
+│   │   └── main.tsx                   # エントリーポイント
+│   ├── public/                        # 静的アセット
+│   └── package.json                   # Node依存関係とスクリプト
+├── download_model.py                  # SpeechBrainモデルダウンロードスクリプト
+├── .env                               # 環境変数（要作成）
+├── AGENTS.md                          # 開発ログ
+├── INSTALLATION.md                    # このファイル
+└── README.md                          # プロジェクト概要
+```
+
+## サポート情報
+
+- **SpeechBrain Documentation**: https://speechbrain.github.io/
+- **Azure OpenAI Documentation**: https://learn.microsoft.com/en-us/azure/ai-services/openai/
+- **FastAPI Documentation**: https://fastapi.tiangolo.com/
+- **React Documentation**: https://react.dev/

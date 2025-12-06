@@ -20,6 +20,44 @@ from openai import AzureOpenAI
 import torch
 import torchaudio
 import numpy as np
+
+# Monkeypatch huggingface_hub to support use_auth_token (removed in newer versions)
+# This fixes the compatibility issue with speechbrain
+import huggingface_hub
+_original_hf_hub_download = huggingface_hub.hf_hub_download
+
+def _patched_hf_hub_download(*args, **kwargs):
+    if "use_auth_token" in kwargs:
+        token = kwargs.pop("use_auth_token")
+        if "token" not in kwargs:
+            kwargs["token"] = token
+    return _original_hf_hub_download(*args, **kwargs)
+
+huggingface_hub.hf_hub_download = _patched_hf_hub_download
+
+# Patch os.symlink for Windows to handle WinError 1314 (Privilege not held)
+# SpeechBrain tries to symlink model files; fallback to copy if symlinks fail.
+_original_symlink = os.symlink
+def _patched_symlink(src, dst, *args, **kwargs):
+    try:
+        _original_symlink(src, dst, *args, **kwargs)
+    except OSError as e:
+        # Check for WinError 1314 (A required privilege is not held by the client)
+        if getattr(e, 'winerror', None) == 1314:
+            logger.warning(f"Symlink failed with WinError 1314. Falling back to copy for: {src} -> {dst}")
+            if os.path.isdir(src):
+                # Copy directory
+                if os.path.exists(dst):
+                     shutil.rmtree(dst)
+                shutil.copytree(src, dst)
+            else:
+                # Copy file
+                shutil.copy2(src, dst)
+        else:
+            raise
+
+os.symlink = _patched_symlink
+
 from speechbrain.pretrained import EncoderClassifier
 from pydub import AudioSegment
 
@@ -85,6 +123,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Pre-load models on startup to catch errors early"""
+    try:
+        logger.info("Pre-loading speaker encoder on startup...")
+        load_speaker_encoder()
+        logger.info("Speaker encoder ready!")
+    except Exception as e:
+        logger.error(f"Failed to pre-load speaker encoder: {e}")
+        logger.warning("Server will continue, but speaker features may not work")
 
 
 _minutes: List[Minute] = [
@@ -179,11 +229,52 @@ def load_speaker_encoder() -> EncoderClassifier:
     global _SPEAKER_ENCODER
     if _SPEAKER_ENCODER is None:
         logger.info("Loading SpeechBrain EncoderClassifier...")
-        _SPEAKER_ENCODER = EncoderClassifier.from_hparams(
-            source="speechbrain/spkrec-ecapa-voxceleb",
-            run_opts={"device": "cpu"},
-            savedir="tmp_model"
-        )
+        savedir = BASE_DIR / "tmp_model"
+        
+        # Check if model files exist locally (pre-downloaded)
+        required_files = [
+            "hyperparams.yaml",
+            "embedding_model.ckpt",
+            "mean_var_norm_emb.ckpt",
+            "classifier.ckpt",
+            "label_encoder.txt"
+        ]
+        
+        files_exist = all((savedir / f).exists() for f in required_files)
+        
+        if files_exist:
+            logger.info(f"Using pre-downloaded model from {savedir}")
+            source = str(savedir)
+        else:
+            logger.info("Downloading model from Hugging Face...")
+            logger.info("This may take a few minutes on first run (~100MB download)")
+            source = "speechbrain/spkrec-ecapa-voxceleb"
+            
+            # Clear cache directory to ensure fresh download
+            if savedir.exists():
+                logger.info(f"Clearing existing model cache at {savedir}")
+                try:
+                    shutil.rmtree(savedir)
+                except Exception as e:
+                    logger.warning(f"Failed to clear cache: {e}")
+            
+            # Ensure directory exists
+            savedir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            _SPEAKER_ENCODER = EncoderClassifier.from_hparams(
+                source=source,
+                run_opts={"device": "cpu"},
+                savedir=str(savedir)
+            )
+            logger.info("Speaker recognition model loaded successfully!")
+        except Exception as e:
+            logger.error(f"Failed to load speaker encoder: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load speaker recognition model: {str(e)}"
+            )
+    
     return _SPEAKER_ENCODER
 
 
@@ -419,7 +510,23 @@ async def process_audio(
 async def create_speaker_embedding(file: UploadFile = File(...)):
     content = await file.read()
     try:
-        embedding = _compute_embedding_from_wav_bytes(content)
+        logger.info(f"Creating speaker embedding for file: {file.filename}")
+        
+        # Convert to WAV using pydub to handle various formats (mp3, m4a, etc.)
+        # Load from memory
+        audio = AudioSegment.from_file(BytesIO(content))
+        
+        # Export to WAV memory buffer
+        wav_io = BytesIO()
+        audio.export(wav_io, format="wav")
+        wav_bytes = wav_io.getvalue()
+        
+        # Load encoder (may trigger download on first call)
+        logger.info("Loading speaker encoder for embedding computation...")
+        load_speaker_encoder()  # This will use the cached global instance
+        
+        embedding = _compute_embedding_from_wav_bytes(wav_bytes)
+        logger.info(f"Successfully computed embedding (shape: {embedding.shape})")
         
         bio = BytesIO()
         np.save(bio, embedding)
@@ -432,9 +539,14 @@ async def create_speaker_embedding(file: UploadFile = File(...)):
             media_type="application/octet-stream",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'}
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Embedding creation failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Embedding creation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to create speaker embedding: {str(e)}"
+        )
 
 
 class SpeakerRegistration(BaseModel):
@@ -485,6 +597,66 @@ async def register_speaker(data: SpeakerRegistration):
 
     except Exception as e:
         logger.error(f"Registration failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/speakers", summary="List all registered speakers")
+async def list_speakers():
+    speakers = []
+    for spk_file in SPEAKERS_DIR.glob("*.npy"):
+        speakers.append({"name": spk_file.stem, "path": str(spk_file)})
+    return sorted(speakers, key=lambda x: x["name"])
+
+
+@app.post("/api/speakers", summary="Add a new speaker from audio file")
+async def add_speaker(
+    file: UploadFile = File(...),
+    name: str = Form(...)
+):
+    try:
+        content = await file.read()
+        
+        # Convert to WAV using pydub to handle various formats (mp3, m4a, etc.)
+        # Load from memory
+        audio = AudioSegment.from_file(BytesIO(content))
+        
+        # Export to WAV memory buffer
+        wav_io = BytesIO()
+        audio.export(wav_io, format="wav")
+        wav_bytes = wav_io.getvalue()
+        
+        embedding = _compute_embedding_from_wav_bytes(wav_bytes)
+        
+        safe_name = "".join([c for c in name if c.isalnum() or c in (' ', '_', '-')]).strip()
+        if not safe_name:
+            raise HTTPException(status_code=400, detail="Invalid speaker name")
+            
+        save_path = SPEAKERS_DIR / f"{safe_name}.npy"
+        np.save(save_path, embedding)
+        
+        return {"message": f"Speaker {safe_name} added successfully", "name": safe_name}
+    except Exception as e:
+        logger.error(f"Failed to add speaker: {e}")
+        # Return more detailed error
+        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+
+
+@app.delete("/api/speakers/{name}", summary="Delete a registered speaker")
+async def delete_speaker(name: str):
+    # Security check: basic strict filename
+    safe_name = "".join([c for c in name if c.isalnum() or c in (' ', '_', '-')]).strip()
+    if safe_name != name:
+         raise HTTPException(status_code=400, detail="Invalid speaker name format")
+
+    target_path = SPEAKERS_DIR / f"{safe_name}.npy"
+    if not target_path.exists():
+        raise HTTPException(status_code=404, detail="Speaker not found")
+        
+    try:
+        os.unlink(target_path)
+        return {"message": f"Speaker {name} deleted"}
+    except Exception as e:
+        logger.error(f"Failed to delete speaker: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
