@@ -237,9 +237,37 @@ export function MinuteGenerator() {
         });
     };
 
-    const downloadFile = (type: 'docx' | 'xlsx') => {
+    const downloadFile = async (type: 'docx' | 'xlsx') => {
         if (!result) return;
-        window.open(`${API_BASE}/api/minutes/${result.id}/download?format=${type}`, '_blank');
+
+        try {
+            const response = await fetch(`${API_BASE}/api/download_minutes?format=${type}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: `議事録_${new Date().toLocaleDateString('ja-JP').replace(/\//g, '-')}`,
+                    summary: result.summary || '',
+                    decisions: result.decisions || [],
+                    action_items: result.action_items || [],
+                    segments: result.segments
+                }),
+            });
+
+            if (!response.ok) throw new Error('Download failed');
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `議事録_${new Date().toISOString().split('T')[0]}.${type}`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (err) {
+            console.error(err);
+            alert(`ダウンロードに失敗しました: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        }
     };
 
     return (

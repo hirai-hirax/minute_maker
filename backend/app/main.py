@@ -20,6 +20,8 @@ from openai import AzureOpenAI
 import torch
 import torchaudio
 import numpy as np
+import pandas as pd
+from docx import Document as DocxDocument
 
 # Monkeypatch huggingface_hub to support use_auth_token (removed in newer versions)
 # This fixes the compatibility issue with speechbrain
@@ -71,12 +73,15 @@ AZURE_OPENAI_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_API_KEY = os.environ.get("AZURE_OPENAI_API_KEY")
 API_VERSION = "2025-03-01-preview"
 
+# OSS Whisper Configuration
+WHISPER_PROVIDER = os.environ.get("WHISPER_PROVIDER", "azure")  # azure, faster-whisper
+OSS_WHISPER_MODEL = os.environ.get("OSS_WHISPER_MODEL", "base")  # tiny, base, small, medium, large-v2, large-v3
+OSS_WHISPER_DEVICE = os.environ.get("OSS_WHISPER_DEVICE", "cpu")  # cpu or cuda
+
 # Directory Setup
 BASE_DIR = Path(__file__).resolve().parent.parent
-UPLOAD_DIR = BASE_DIR / "data" / "uploads"
 SPEAKERS_DIR = BASE_DIR / "data" / "speakers"
 
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 SPEAKERS_DIR.mkdir(parents=True, exist_ok=True)
 
 PROMPTS_DATA = {
@@ -132,9 +137,15 @@ async def startup_event():
         logger.info("Pre-loading speaker encoder on startup...")
         load_speaker_encoder()
         logger.info("Speaker encoder ready!")
+        
+        # Pre-load OSS Whisper model if configured
+        if WHISPER_PROVIDER == "faster-whisper":
+            logger.info(f"Pre-loading {WHISPER_PROVIDER} model ({OSS_WHISPER_MODEL})...")
+            load_oss_whisper_model()
+            logger.info(f"{WHISPER_PROVIDER} model ready!")
     except Exception as e:
-        logger.error(f"Failed to pre-load speaker encoder: {e}")
-        logger.warning("Server will continue, but speaker features may not work")
+        logger.error(f"Failed to pre-load models: {e}")
+        logger.warning("Server will continue, but some features may not work")
 
 
 _minutes: List[Minute] = [
@@ -278,6 +289,31 @@ def load_speaker_encoder() -> EncoderClassifier:
     return _SPEAKER_ENCODER
 
 
+# ---------------------------------------------------------------------------
+# OSS Whisper Model Loading
+# ---------------------------------------------------------------------------
+
+_WHISPER_MODEL = None
+
+def load_oss_whisper_model():
+    """Load OSS Whisper model (faster-whisper)"""
+    global _WHISPER_MODEL
+    if _WHISPER_MODEL is None:
+        if WHISPER_PROVIDER == "faster-whisper":
+            from faster_whisper import WhisperModel
+            logger.info(f"Loading faster-whisper model: {OSS_WHISPER_MODEL}")
+            compute_type = "int8" if OSS_WHISPER_DEVICE == "cpu" else "float16"
+            _WHISPER_MODEL = WhisperModel(
+                OSS_WHISPER_MODEL,
+                device=OSS_WHISPER_DEVICE,
+                compute_type=compute_type
+            )
+            logger.info(f"Loaded faster-whisper model on {OSS_WHISPER_DEVICE} with {compute_type}")
+        else:
+            raise ValueError(f"Unknown whisper provider: {WHISPER_PROVIDER}")
+    return _WHISPER_MODEL
+
+
 @contextmanager
 def temp_file_path(data: bytes, suffix: str):
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -395,13 +431,24 @@ def _apply_speaker_identification(
 # ---------------------------------------------------------------------------
 
 def _transcribe_audio(audio_path: str, original_filename: str, model: str = "gpt-4o") -> List[dict]:
+    """Transcribe audio using configured provider (Azure or OSS Whisper)"""
+    if WHISPER_PROVIDER == "azure":
+        return _transcribe_with_azure(audio_path, original_filename, model)
+    elif WHISPER_PROVIDER == "faster-whisper":
+        return _transcribe_with_oss_whisper(audio_path)
+    else:
+        raise ValueError(f"Unknown WHISPER_PROVIDER: {WHISPER_PROVIDER}")
+
+
+def _transcribe_with_azure(audio_path: str, original_filename: str, model: str) -> List[dict]:
+    """Transcribe using Azure OpenAI Whisper"""
     # Determine API version based on model
     api_version = API_VERSION
     if model == "whisper":
         api_version = "2024-06-01"
     
     client = _create_azure_client(api_version=api_version)
-    logger.info(f"Starting transcription with model: {model}, api_version: {api_version}")
+    logger.info(f"Starting Azure transcription with model: {model}, api_version: {api_version}")
     
     # Determine mime type/extension for the API
     ext = os.path.splitext(original_filename)[1]
@@ -436,9 +483,38 @@ def _transcribe_audio(audio_path: str, original_filename: str, model: str = "gpt
             "start": seg.get("start", 0.0),
             "end": seg.get("end", 0.0),
             "text": seg.get("text", "").strip(),
-            "speaker": seg.get("speaker", ""), # Whisper will imply empty string here
+            "speaker": seg.get("speaker", ""),  # Whisper will imply empty string here
         })
         
+    return results
+
+
+def _transcribe_with_oss_whisper(audio_path: str) -> List[dict]:
+    """Transcribe using OSS faster-whisper"""
+    logger.info(f"Starting OSS Whisper transcription with model: {OSS_WHISPER_MODEL}")
+    whisper_model = load_oss_whisper_model()
+    
+    # Transcribe with faster-whisper
+    segments, info = whisper_model.transcribe(
+        audio_path,
+        language="ja",  # Japanese - change to None for auto-detection
+        beam_size=5,
+        word_timestamps=False,
+        vad_filter=True,  # Voice activity detection for better segmentation
+    )
+    
+    logger.info(f"Detected language: {info.language} with probability {info.language_probability:.2f}")
+    
+    results = []
+    for seg in segments:
+        results.append({
+            "start": seg.start,
+            "end": seg.end,
+            "text": seg.text.strip(),
+            "speaker": ""  # No diarization in OSS Whisper - will be filled by SpeechBrain later
+        })
+    
+    logger.info(f"Transcribed {len(results)} segments")
     return results
 
 
@@ -447,18 +523,19 @@ async def process_audio(
     file: UploadFile = File(...),
     model: str = Form("gpt-4o")  # 'gpt-4o' or 'whisper'
 ):
-    # Generate ID and save file to uploads dir for later access
+    # Generate ID (for response tracking, not file storage)
     process_id = str(uuid4())
     suffix = Path(file.filename).suffix
-    saved_filename = f"{process_id}{suffix}"
-    saved_path = UPLOAD_DIR / saved_filename
     
-    with open(saved_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-        
-    tmp_path = str(saved_path)
-
+    # Create temporary file for processing
+    tmp_path = None
     try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+            shutil.copyfileobj(file.file, tmp_file)
+            tmp_path = tmp_file.name
+        
+        logger.info(f"Processing audio file: {file.filename} (process_id: {process_id})")
+        
         # Run transcription with diarization logic
         segments_data = _transcribe_audio(tmp_path, file.filename, model)
         
@@ -498,11 +575,15 @@ async def process_audio(
         )
     except Exception as e:
         logger.error(f"Transcription failed: {e}")
-        # Clean up file on error
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
         raise HTTPException(status_code=500, detail=str(e))
-    # We do NOT delete the file in finally block anymore, to allow subsequent operations like speaker registration
+    finally:
+        # Always clean up temporary file
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+                logger.info(f"Cleaned up temporary file: {tmp_path}")
+            except Exception as e:
+                logger.warning(f"Failed to delete temp file {tmp_path}: {e}")
 
 
 
@@ -550,32 +631,42 @@ async def create_speaker_embedding(file: UploadFile = File(...)):
 
 
 class SpeakerRegistration(BaseModel):
-    process_id: str
     start: float
     end: float
-    speaker_name: str
 
 
-@app.post("/api/register_speaker", summary="Register speaker embedding from transcript segment")
-async def register_speaker(data: SpeakerRegistration):
-    # Find the audio file
-    # We don't know the extension, so look for files starting with process_id
-    files = list(UPLOAD_DIR.glob(f"{data.process_id}.*"))
-    if not files:
-        raise HTTPException(status_code=404, detail="Audio file not found for this session")
+@app.post("/api/register_speaker", summary="Register speaker embedding from audio segment")
+async def register_speaker(
+    audio: UploadFile = File(...),
+    start: float = Form(...),
+    end: float = Form(...),
+    speaker_name: str = Form(...)
+):
+    """Register a speaker by extracting embedding from a time segment of the uploaded audio file.
     
-    audio_path = files[0]
-    
+    Args:
+        audio: Audio file to process
+        start: Start time in seconds
+        end: End time in seconds
+        speaker_name: Name to save the speaker embedding as
+    """
+    tmp_path = None
     try:
+        # Save uploaded file to temporary location
+        suffix = Path(audio.filename).suffix
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+            shutil.copyfileobj(audio.file, tmp_file)
+            tmp_path = tmp_file.name
+        
         # Load audio segment
-        start_ms = int(data.start * 1000)
-        end_ms = int(data.end * 1000)
+        start_ms = int(start * 1000)
+        end_ms = int(end * 1000)
         
         # Verify duration
         if end_ms - start_ms < 500:
-             raise HTTPException(status_code=400, detail="Segment too short for embedding (min 0.5s)")
+            raise HTTPException(status_code=400, detail="Segment too short for embedding (min 0.5s)")
 
-        sound = AudioSegment.from_file(str(audio_path))
+        sound = AudioSegment.from_file(tmp_path)
         segment_audio = sound[start_ms:end_ms]
         
         seg_io = BytesIO()
@@ -586,18 +677,29 @@ async def register_speaker(data: SpeakerRegistration):
         embedding = _compute_embedding_from_wav_bytes(seg_io.read())
         
         # Save embedding
-        safe_name = "".join([c for c in data.speaker_name if c.isalnum() or c in (' ', '_', '-')]).strip()
+        safe_name = "".join([c for c in speaker_name if c.isalnum() or c in (' ', '_', '-')]).strip()
         if not safe_name:
             safe_name = "unknown_speaker"
             
         save_path = SPEAKERS_DIR / f"{safe_name}.npy"
         np.save(save_path, embedding)
         
+        logger.info(f"Speaker '{safe_name}' registered successfully from audio segment")
         return {"message": f"Speaker {safe_name} registered successfully", "path": str(save_path)}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Registration failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Clean up temporary file
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+                logger.info(f"Cleaned up temporary file: {tmp_path}")
+            except Exception as e:
+                logger.warning(f"Failed to delete temp file {tmp_path}: {e}")
 
 
 @app.get("/api/speakers", summary="List all registered speakers")
@@ -608,7 +710,7 @@ async def list_speakers():
     return sorted(speakers, key=lambda x: x["name"])
 
 
-@app.post("/api/speakers", summary="Add a new speaker from audio file")
+@app.post("/api/speakers", summary="Add a new speaker from audio or embedding file")
 async def add_speaker(
     file: UploadFile = File(...),
     name: str = Form(...)
@@ -616,17 +718,41 @@ async def add_speaker(
     try:
         content = await file.read()
         
-        # Convert to WAV using pydub to handle various formats (mp3, m4a, etc.)
-        # Load from memory
-        audio = AudioSegment.from_file(BytesIO(content))
+        # Determine file type based on extension
+        file_ext = Path(file.filename).suffix.lower()
         
-        # Export to WAV memory buffer
-        wav_io = BytesIO()
-        audio.export(wav_io, format="wav")
-        wav_bytes = wav_io.getvalue()
+        if file_ext == '.npy':
+            # Direct .npy embedding file upload
+            logger.info(f"Processing .npy embedding file: {file.filename}")
+            
+            # Load and validate the embedding
+            bio = BytesIO(content)
+            embedding = np.load(bio)
+            
+            # Validate embedding shape (should be 1D array)
+            if embedding.ndim != 1:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Invalid embedding shape: expected 1D array, got shape {embedding.shape}"
+                )
+            
+            logger.info(f"Loaded embedding with shape: {embedding.shape}")
+            
+        else:
+            # Audio file upload - compute embedding
+            logger.info(f"Processing audio file: {file.filename}")
+            
+            # Convert to WAV using pydub to handle various formats (mp3, m4a, etc.)
+            audio = AudioSegment.from_file(BytesIO(content))
+            
+            # Export to WAV memory buffer
+            wav_io = BytesIO()
+            audio.export(wav_io, format="wav")
+            wav_bytes = wav_io.getvalue()
+            
+            embedding = _compute_embedding_from_wav_bytes(wav_bytes)
         
-        embedding = _compute_embedding_from_wav_bytes(wav_bytes)
-        
+        # Save embedding with safe name
         safe_name = "".join([c for c in name if c.isalnum() or c in (' ', '_', '-')]).strip()
         if not safe_name:
             raise HTTPException(status_code=400, detail="Invalid speaker name")
@@ -634,9 +760,13 @@ async def add_speaker(
         save_path = SPEAKERS_DIR / f"{safe_name}.npy"
         np.save(save_path, embedding)
         
+        logger.info(f"Speaker '{safe_name}' saved successfully to {save_path}")
         return {"message": f"Speaker {safe_name} added successfully", "name": safe_name}
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to add speaker: {e}")
+        logger.error(f"Failed to add speaker: {e}", exc_info=True)
         # Return more detailed error
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
@@ -662,12 +792,19 @@ async def delete_speaker(name: str):
 
 @app.post("/api/identify_speakers", response_model=ProcessingResult, summary="Identify speakers using embeddings")
 async def identify_speakers(
-    audio: Optional[UploadFile] = File(None),  # Optional now, can use process_id or new upload
-    process_id: Optional[str] = Form(None),
+    audio: UploadFile = File(...),
     transcript_json: str = Form(..., description="JSON string of transcript segments"),
     embedding_files: List[UploadFile] = File(default=[]),
     threshold: float = Form(0.65, description="Similarity threshold for identification"),
 ):
+    """Identify speakers in audio segments using registered speaker embeddings.
+    
+    Args:
+        audio: Audio file to analyze (required)
+        transcript_json: JSON string containing transcript segments with timestamps
+        embedding_files: Optional additional speaker embedding files (.npy)
+        threshold: Similarity threshold for speaker identification (default: 0.65)
+    """
     # Parse transcript
     try:
         segments_data = json.loads(transcript_json)
@@ -730,28 +867,18 @@ async def identify_speakers(
             speakers=sorted(list(speakers))
         )
 
-    # Prepare Audio Path
+    # Process audio file using temporary storage
     tmp_path = None
-    should_cleanup = False
-    
-    if audio:
+    try:
         suffix = Path(audio.filename).suffix
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
             shutil.copyfileobj(audio.file, tmp_file)
             tmp_path = tmp_file.name
-        should_cleanup = True
-    elif process_id:
-        files = list(UPLOAD_DIR.glob(f"{process_id}.*"))
-        if files:
-            tmp_path = str(files[0])
-            should_cleanup = False # Don't delete stored upload
-        else:
-            raise HTTPException(status_code=404, detail="Process ID not found")
-    else:
-        raise HTTPException(status_code=400, detail="Either audio file or process_id must be provided")
-
-    try:
-        updated_segments, all_speakers = _apply_speaker_identification(tmp_path, segments_data, known_speakers, threshold)
+        
+        logger.info(f"Identifying speakers in audio file: {audio.filename}")
+        updated_segments, all_speakers = _apply_speaker_identification(
+            tmp_path, segments_data, known_speakers, threshold
+        )
         
         # Reconstruct Response
         segments_models = [TranscriptSegment(**s) for s in updated_segments]
@@ -768,9 +895,17 @@ async def identify_speakers(
             speakers=sorted(list(all_speakers))
         )
         
+    except Exception as e:
+        logger.error(f"Speaker identification failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
-        if should_cleanup and tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        # Always clean up temporary file
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+                logger.info(f"Cleaned up temporary file: {tmp_path}")
+            except Exception as e:
+                logger.warning(f"Failed to delete temp file {tmp_path}: {e}")
 
 
 class SummarizeRequest(BaseModel):
@@ -815,10 +950,45 @@ async def generate_summary(req: SummarizeRequest):
 
         data = json.loads(content)
         
+        # Normalize action_items - handle both list of strings and list of dicts
+        action_items_raw = data.get("action_items", [])
+        action_items = []
+        if isinstance(action_items_raw, list):
+            for item in action_items_raw:
+                if isinstance(item, dict):
+                    # If it's a dict, try to extract 'task' or concatenate values
+                    if "task" in item:
+                        action_items.append(item["task"])
+                    else:
+                        # Concatenate all values in the dict
+                        action_items.append(" ".join(str(v) for v in item.values()))
+                elif isinstance(item, str):
+                    action_items.append(item)
+        
+        # Normalize decisions - handle both string and list
+        decisions_raw = data.get("decisions", [])
+        decisions = []
+        if isinstance(decisions_raw, str):
+            # If it's a single string, split by newlines or use as-is
+            if "\n" in decisions_raw:
+                decisions = [d.strip() for d in decisions_raw.split("\n") if d.strip()]
+            else:
+                decisions = [decisions_raw]
+        elif isinstance(decisions_raw, list):
+            for item in decisions_raw:
+                if isinstance(item, dict):
+                    # Similar handling as action_items
+                    if "decision" in item:
+                        decisions.append(item["decision"])
+                    else:
+                        decisions.append(" ".join(str(v) for v in item.values()))
+                elif isinstance(item, str):
+                    decisions.append(item)
+        
         return SummarizeResponse(
             summary=data.get("summary", ""),
-            action_items=data.get("action_items", []),
-            decisions=data.get("decisions", [])
+            action_items=action_items,
+            decisions=decisions
         )
     except Exception as e:
         logger.error(f"Summarization failed: {e}")
@@ -830,13 +1000,156 @@ async def generate_summary(req: SummarizeRequest):
         )
 
 
+# ---------------------------------------------------------------------------
+# File Download (Word/Excel)
+# ---------------------------------------------------------------------------
 
-@app.get("/api/minutes/{minute_id}/download", summary="Download minutes as file")
-async def download_minutes(minute_id: str, format: str = "docx"):
-    # Placeholder for file generation logic
-    # Should generate .docx or .xlsx based on 'format'
+class DownloadRequest(BaseModel):
+    title: str
+    summary: str
+    decisions: List[str]
+    action_items: List[str]
+    segments: List[TranscriptSegment]
+
+
+def _generate_docx(data: DownloadRequest) -> BytesIO:
+    """Generate a Word document from minute data (mojiokoshi7.py準拠)"""
+    doc = DocxDocument()
+    doc.add_heading('議事録', 0)
     
-    # For now, return a simple text response or file
-    from fastapi.responses import PlainTextResponse
-    return PlainTextResponse(f"Content for minute {minute_id} in format {format}")
+    # 要約セクション
+    if data.summary:
+        doc.add_heading('概要', level=1)
+        doc.add_paragraph(data.summary)
+        doc.add_paragraph('')  # 空行
+    
+    # 決定事項セクション
+    if data.decisions:
+        doc.add_heading('決定事項', level=1)
+        for decision in data.decisions:
+            doc.add_paragraph(decision, style='List Bullet')
+        doc.add_paragraph('')  # 空行
+    
+    # アクションアイテムセクション
+    if data.action_items:
+        doc.add_heading('アクションアイテム', level=1)
+        for action in data.action_items:
+            doc.add_paragraph(action, style='List Bullet')
+        doc.add_paragraph('')  # 空行
+    
+    # 文字起こし詳細セクション（mojiokoshi7.py形式）
+    if data.segments:
+        doc.add_heading('文字起こし', level=1)
+        
+        # 話者ごとにグループ化（mojiokoshi7.pyと同じロジック）
+        merged_segments = []
+        current_speaker = None
+        current_texts = []
+        
+        for seg in data.segments:
+            speaker = seg.speaker if seg.speaker else "不明"
+            
+            if speaker != current_speaker:
+                if current_texts:
+                    merged_segments.append({
+                        "speaker": current_speaker,
+                        "text": " ".join(current_texts)
+                    })
+                current_speaker = speaker
+                current_texts = [seg.text]
+            else:
+                current_texts.append(seg.text)
+        
+        # 最後のグループを追加
+        if current_texts:
+            merged_segments.append({
+                "speaker": current_speaker,
+                "text": " ".join(current_texts)
+            })
+        
+        # 形式: （話者）テキスト内容
+        for merged in merged_segments:
+            speaker = merged["speaker"]
+            text = merged["text"]
+            doc.add_paragraph(f"（{speaker}）{text}")
+    
+    # BytesIOに保存
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def _generate_xlsx(data: DownloadRequest) -> BytesIO:
+    """Generate an Excel document from minute data (mojiokoshi7.py準拠)"""
+    buffer = BytesIO()
+    
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        # シート1: 要約（optional）
+        summary_data = []
+        if data.summary:
+            summary_data.append({'カテゴリ': '概要', '内容': data.summary})
+        for decision in data.decisions:
+            summary_data.append({'カテゴリ': '決定事項', '内容': decision})
+        for action in data.action_items:
+            summary_data.append({'カテゴリ': 'アクションアイテム', '内容': action})
+        
+        if summary_data:
+            summary_df = pd.DataFrame(summary_data)
+            summary_df.to_excel(writer, index=False, sheet_name='サマリー')
+        
+        # シート2: 文字起こし詳細（mojiokoshi7.py形式）
+        if data.segments:
+            transcript_data = []
+            for seg in data.segments:
+                transcript_data.append({
+                    '開始時刻': seg.start,
+                    '終了時刻': seg.end,
+                    '話者': seg.speaker if seg.speaker else "不明",
+                    '内容': seg.text
+                })
+            
+            transcript_df = pd.DataFrame(transcript_data)
+            transcript_df.to_excel(writer, index=False, sheet_name='文字起こし')
+    
+    buffer.seek(0)
+    return buffer
+
+
+@app.post("/api/download_minutes", summary="Download minutes as Word or Excel file")
+async def download_minutes(request: DownloadRequest, format: str = "docx"):
+    """
+    Download minutes in Word (.docx) or Excel (.xlsx) format
+    
+    Args:
+        request: DownloadRequest containing minute data
+        format: File format - 'docx' or 'xlsx'
+    """
+    try:
+        if format == "docx":
+            buffer = _generate_docx(request)
+            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            filename = f"{request.title}.docx"
+        elif format == "xlsx":
+            buffer = _generate_xlsx(request)
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            filename = f"{request.title}.xlsx"
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported format: {format}")
+        
+        # URL encode the filename to support Japanese characters
+        from urllib.parse import quote
+        encoded_filename = quote(filename)
+        
+        return StreamingResponse(
+            buffer,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+            }
+        )
+    
+    except Exception as e:
+        logger.error(f"File generation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate file: {str(e)}")
 

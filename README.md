@@ -5,7 +5,9 @@ FastAPI と Vite + React + TypeScript を組み合わせた議事録自動生成
 ## アプリの概要
 
 ### 主要機能
-- **音声・動画の文字起こし**: Azure OpenAI（GPT-4o / Whisper）を使用した高精度な文字起こし
+- **音声・動画の文字起こし**: 
+  - Azure OpenAI（GPT-4o / Whisper）による高精度な文字起こしと話者識別
+  - OSS版Whisper（faster-whisper）による高速な文字起こし
 - **話者識別**: SpeechBrainを使用した自動話者識別と話者登録機能
 - **要約生成**: Azure OpenAI GPT-4oによる議事録の自動要約
 - **議事録エクスポート**: Word / Excel 形式でのダウンロード
@@ -48,6 +50,20 @@ uv run python download_model.py
 uv run uvicorn backend.app.main:app --reload
 ```
 
+**OSS版Whisperを使用する場合:**
+```bash
+# .envファイルに以下を追加（Azure OpenAI設定は不要）
+# WHISPER_PROVIDER=faster-whisper
+# OSS_WHISPER_MODEL=base  # tiny/base/small/medium/large-v2/large-v3
+# OSS_WHISPER_DEVICE=cpu  # または cuda（GPU使用時）
+
+# 依存関係の再同期
+uv sync
+
+# サーバー起動
+uv run uvicorn backend.app.main:app --reload
+```
+
 #### 2. フロントエンド
 ```bash
 cd frontend
@@ -60,7 +76,9 @@ npm run dev -- --host
 ## 主要機能の詳細
 
 ### 1. 文字起こし
-- **モデル選択**: GPT-4o（話者識別込み）またはWhisper（文字起こしのみ）
+- **プロバイダー選択**: 
+  - **Azure OpenAI**: GPT-4o（話者識別込み）またはWhisper（文字起こしのみ）
+  - **OSS Whisper**: faster-whisper（文字起こしのみ、後からSpeechBrainで話者識別）
 - **対応フォーマット**: MP3, WAV, MP4, M4A
 - **タイムスタンプ**: セグメントごとの開始・終了時刻を記録
 
@@ -175,7 +193,8 @@ minute_maker/
 
 ### バックエンド
 - **FastAPI**: 高速なPython Webフレームワーク
-- **Azure OpenAI**: GPT-4o / Whisper による文字起こし・要約
+- **Azure OpenAI**: GPT-4o / Whisper による文字起こし・要約（オプション）
+- **faster-whisper**: OSS版Whisper（高速文字起こし、オプション）
 - **SpeechBrain**: 話者認識（ECAPA-TDNN モデル）
 - **PyTorch**: 機械学習フレームワーク
 - **pydub**: 音声ファイル変換

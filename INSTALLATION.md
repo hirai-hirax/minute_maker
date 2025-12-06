@@ -32,12 +32,22 @@ uv sync
 
 `.env`ファイルをプロジェクトルートに作成し、以下の環境変数を設定してください:
 
+**Azure OpenAI使用時:**
 ```env
 AZURE_OPENAI_ENDPOINT=your_endpoint_here
 AZURE_OPENAI_API_KEY=your_api_key_here
 ```
 
-#### 2.3 SpeechBrain モデルのダウンロード（必須）
+**OSS版Whisper（faster-whisper）使用時:**
+```env
+WHISPER_PROVIDER=faster-whisper
+OSS_WHISPER_MODEL=base  # tiny, base, small, medium, large-v2, large-v3
+OSS_WHISPER_DEVICE=cpu  # cpu または cuda（GPU使用時）
+```
+
+**注意**: OSS版Whisperを使用する場合、Azure OpenAI設定は不要です。
+
+#### 2.3 SpeechBrain モデルのダウンロード（話者識別機能を使う場合）
 
 **重要**: 話者認識機能を使用するには、事前にSpeechBrainモデルをダウンロードする必要があります。
 
@@ -92,13 +102,17 @@ npm run dev -- --host
 - ✅ **torch** - PyTorch (機械学習フレームワーク)
 - ✅ **torchaudio** - 音声処理
 - ✅ **python-dotenv** - 環境変数の管理
-- ✅ **openai** - Azure OpenAI API
+#### 文字起こしライブラリ
+- ✅ **openai** - Azure OpenAI API（オプション、Azure使用時のみ必要）
+- ✅ **faster-whisper** - OSS版Whisper（オプション、ローカル文字起こし用）
+
+#### 音声処理
 - ✅ **pydub** - 音声ファイルの変換・編集
 - ✅ **python-docx** - Word文書の読み込み
 - ✅ **python-pptx** - PowerPoint文書の読み込み
 - ✅ **extract-msg** - Outlookメッセージファイルの読み込み
 
-#### SpeechBrainについて
+#### 話者認識
 - ✅ **speechbrain** - 話者認識用ライブラリ
 - ✅ **huggingface-hub** - モデルダウンロード用
 
