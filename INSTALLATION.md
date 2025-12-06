@@ -2,7 +2,7 @@
 
 ## 前提条件
 
-- **Python**: 3.12 以降
+- **Python**: 3.12
 - **Node.js**: 18 以降
 - **uv**: Python パッケージマネージャー ([インストール方法](https://github.com/astral-sh/uv))
 
