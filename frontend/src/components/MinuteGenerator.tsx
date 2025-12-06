@@ -1,10 +1,10 @@
 import React, { useState, useRef } from 'react';
-import { Upload, FileAudio, CheckCircle, Loader2, FileText, FileSpreadsheet, Play, Pause, UserPlus, X } from 'lucide-react';
+import { Upload, FileAudio, CheckCircle, Loader2, FileText, FileSpreadsheet, Play, Pause, UserPlus, X, RefreshCw, ArrowRight } from 'lucide-react';
 import './MinuteGenerator.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000';
 
-type ProcessState = 'idle' | 'uploading' | 'transcribing' | 'diarizing' | 'summarizing' | 'completed' | 'error';
+type ProcessState = 'idle' | 'uploading' | 'processing' | 'reviewing' | 'summarizing_setup' | 'summarizing' | 'completed' | 'error';
 
 interface TranscriptSegment {
     start: number;
@@ -13,12 +13,20 @@ interface TranscriptSegment {
     speaker: string;
 }
 
+interface PromptPreset {
+    id: string;
+    name: string;
+    description: string;
+}
+
 interface ProcessingResult {
     id: string;
     transcript: string;
     segments: TranscriptSegment[];
     summary: string;
     speakers: string[];
+    action_items?: string[];
+    decisions?: string[];
 }
 
 const formatTime = (seconds: number) => {
@@ -32,12 +40,24 @@ export function MinuteGenerator() {
     const [file, setFile] = useState<File | null>(null);
     const [result, setResult] = useState<ProcessingResult | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [prompts, setPrompts] = useState<PromptPreset[]>([]);
+    const [selectedPromptId, setSelectedPromptId] = useState<string>('standard');
+    const [selectedModel, setSelectedModel] = useState<'gpt-4o' | 'whisper'>('gpt-4o');
+    const [mergedTranscript, setMergedTranscript] = useState<{ speaker: string; text: string }[]>([]);
+
     const [registerModal, setRegisterModal] = useState<{ isOpen: boolean; segment: TranscriptSegment | null; name: string }>({
         isOpen: false,
         segment: null,
         name: ''
     });
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    React.useEffect(() => {
+        fetch(`${API_BASE}/api/prompts`)
+            .then(res => res.json())
+            .then(data => setPrompts(data))
+            .catch(console.error);
+    }, []);
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
@@ -60,15 +80,11 @@ export function MinuteGenerator() {
 
         const formData = new FormData();
         formData.append('file', file);
+        formData.append('model', selectedModel);
 
         try {
-            // 1. Upload & Transcribe
-            setState('transcribing');
-            // In a real app, we might upload first, then poll for status.
-            // Here we assume a long-running request or we'll simulate steps if backend isn't ready.
+            setState('processing'); // Combined transcribing/diarizing visual state
 
-            // Simulating the flow for UI demonstration if backend fails immediately
-            // But let's try to hit the endpoint
             const response = await fetch(`${API_BASE}/api/process_audio`, {
                 method: 'POST',
                 body: formData,
@@ -76,50 +92,107 @@ export function MinuteGenerator() {
 
             if (!response.ok) throw new Error('Processing failed');
 
-            // Assuming the backend does everything in one go or returns a job ID
-            // For this demo, let's assume it returns the final result
             const data = await response.json();
-
-            setState('diarizing');
-            await new Promise(r => setTimeout(r, 1000)); // Fake delay for visual
-
-            setState('summarizing');
-            await new Promise(r => setTimeout(r, 1000)); // Fake delay for visual
-
             setResult(data);
-            setState('completed');
+            setState('reviewing'); // Stop here for review
         } catch (err) {
             console.error(err);
-            // Fallback for demo purposes if backend is missing
-            // Remove this in production!
-            simulateSuccess();
+            setError(err instanceof Error ? err.message : 'An unknown error occurred');
+            setState('error');
         }
     };
 
-    const simulateSuccess = async () => {
-        await new Promise(r => setTimeout(r, 1500));
-        setState('transcribing');
-        await new Promise(r => setTimeout(r, 1500));
-        setState('diarizing');
-        await new Promise(r => setTimeout(r, 1500));
-        setState('summarizing');
-        await new Promise(r => setTimeout(r, 1500));
+    const handleIdentifySpeakers = async () => {
+        if (!result) return;
+        setState('processing');
 
-        setResult({
-            id: '123',
-            transcript: "[00:00:00] Speaker A: こんにちは、本日の会議を始めます。\n[00:00:05] Speaker B: よろしくお願いします。まずは進捗報告からですね。\n[00:00:15] Speaker A: はい、フロントエンドの実装はほぼ完了しました。",
-            segments: [
-                { start: 0, end: 5, speaker: "Speaker A", text: "こんにちは、本日の会議を始めます。" },
-                { start: 5, end: 15, speaker: "Speaker B", text: "よろしくお願いします。まずは進捗報告からですね。" },
-                { start: 15, end: 20, speaker: "Speaker A", text: "はい、フロントエンドの実装はほぼ完了しました。" }
-            ],
-            summary: "本日の会議では、プロジェクトの進捗報告が行われました。フロントエンドの実装は順調に進んでおり、ほぼ完了していることが報告されました。",
-            speakers: ["Speaker A", "Speaker B"]
-        });
-        setState('completed');
+        const formData = new FormData();
+        formData.append('process_id', result.id);
+        formData.append('transcript_json', JSON.stringify(result.segments));
+
+        try {
+            const response = await fetch(`${API_BASE}/api/identify_speakers`, {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!response.ok) throw new Error('Identification failed');
+
+            const data = await response.json();
+            setResult({ ...result, segments: data.segments, speakers: data.speakers, transcript: data.transcript });
+            setState('reviewing');
+            alert('Speaker identification complete!');
+        } catch (err) {
+            console.error(err);
+            alert('Failed to identify speakers.');
+            setState('reviewing');
+        }
     };
 
+    const prepareSummarySetup = () => {
+        if (!result) return;
 
+        // Merge segments by speaker
+        const merged: { speaker: string; text: string }[] = [];
+        let currentSpeaker = "";
+        let currentText: string[] = [];
+
+        result.segments.forEach((seg) => {
+            const speakerName = seg.speaker || "Unknown";
+
+            if (speakerName !== currentSpeaker) {
+                if (currentText.length > 0) {
+                    merged.push({
+                        speaker: currentSpeaker,
+                        text: currentText.join(" ")
+                    });
+                }
+                currentSpeaker = speakerName;
+                currentText = [seg.text];
+            } else {
+                currentText.push(seg.text);
+            }
+        });
+        if (currentText.length > 0) {
+            merged.push({ speaker: currentSpeaker, text: currentText.join(" ") });
+        }
+
+        setMergedTranscript(merged);
+        setState('summarizing_setup');
+    };
+
+    const handleSummarize = async () => {
+        if (!result) return;
+        setState('summarizing');
+
+        const transcriptText = mergedTranscript.map(m => `${m.speaker}: ${m.text}`).join("\n");
+
+        try {
+            const response = await fetch(`${API_BASE}/api/generate_summary`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    transcript: transcriptText,
+                    prompt_id: selectedPromptId
+                }),
+            });
+
+            if (!response.ok) throw new Error('Summarization failed');
+
+            const summaryData = await response.json();
+            setResult({
+                ...result,
+                summary: summaryData.summary,
+                action_items: summaryData.action_items,
+                decisions: summaryData.decisions
+            });
+            setState('completed');
+        } catch (err) {
+            console.error(err);
+            alert('Summarization failed.');
+            setState('summarizing_setup');
+        }
+    };
 
     const handleRegisterSpeaker = async () => {
         if (!registerModal.segment || !result || !registerModal.name.trim()) return;
@@ -141,7 +214,7 @@ export function MinuteGenerator() {
                 throw new Error(err.detail || 'Registration failed');
             }
 
-            alert(`Speaker "${registerModal.name}" registered successfully! Future identifications will recognize this voice.`);
+            alert(`Speaker "${registerModal.name}" registered successfully! Click "Identify Speakers" to apply changes.`);
             setRegisterModal({ isOpen: false, segment: null, name: '' });
         } catch (e: any) {
             alert(`Error: ${e.message}`);
@@ -227,7 +300,38 @@ export function MinuteGenerator() {
                         </div>
                         <h3>{file ? file.name : "ファイルをドラッグ＆ドロップ"}</h3>
                         <p className="text-secondary mt-4">または クリックして選択</p>
-                        <p className="text-sm text-secondary mt-2">MP3, WAV, MP4, M4A 対応</p>
+                        <p className="text-sm text-secondary mt-2 mb-6">MP3, WAV, MP4, M4A 対応</p>
+
+                        <div className="model-select-group bg-secondary p-4 rounded-lg border border-border inline-flex flex-col gap-2 mb-4 text-left">
+                            <label className="text-xs text-secondary font-medium">使用モデルを選択</label>
+                            <div className="flex gap-4">
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input
+                                        type="radio"
+                                        name="model"
+                                        value="gpt-4o"
+                                        checked={selectedModel === 'gpt-4o'}
+                                        onChange={() => setSelectedModel('gpt-4o')}
+                                    />
+                                    <span className="text-sm font-medium">High Quality (GPT-4o)</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input
+                                        type="radio"
+                                        name="model"
+                                        value="whisper"
+                                        checked={selectedModel === 'whisper'}
+                                        onChange={() => setSelectedModel('whisper')}
+                                    />
+                                    <span className="text-sm font-medium">Standard (Whisper)</span>
+                                </label>
+                            </div>
+                            <p className="text-xs text-secondary mt-1">
+                                {selectedModel === 'gpt-4o'
+                                    ? "高精度な文字起こしと話者識別が可能です。"
+                                    : "より高速ですが、話者識別機能は制限されます。"}
+                            </p>
+                        </div>
 
                         {file && (
                             <button
@@ -243,83 +347,236 @@ export function MinuteGenerator() {
                 {state !== 'idle' && state !== 'error' && (
                     <div className="process-view">
                         <div className="progress-steps">
-                            {['transcribing', 'diarizing', 'summarizing'].map((step, index) => {
-                                const stepState = state === 'completed' ? 'completed' : state;
-                                const isActive = step === state;
-                                const isCompleted = ['transcribing', 'diarizing', 'summarizing', 'completed'].indexOf(state) > index;
+                            {['processing', 'reviewing', 'summarizing_setup', 'completed'].map((step, idx) => {
+                                const stepLabels: any = { processing: '文字起こし', reviewing: '確認・編集', summarizing_setup: '要約・整形', completed: '完了' };
+                                let visualState = state;
+                                if (state === 'summarizing') visualState = 'summarizing_setup';
+                                if (state === 'uploading') visualState = 'processing';
+
+                                const isActive = visualState === step;
+                                let isCompleted = false;
+
+                                if (visualState === 'completed') {
+                                    isCompleted = step !== 'completed';
+                                } else if (visualState === 'summarizing_setup') {
+                                    isCompleted = step === 'processing' || step === 'reviewing';
+                                } else if (visualState === 'reviewing') {
+                                    isCompleted = step === 'processing';
+                                }
+
+                                // Navigation Logic
+                                const isClickable = (() => {
+                                    if (state === 'uploading' || state === 'processing' || state === 'summarizing') return false;
+
+                                    // Target step check
+                                    if (step === 'processing') return true;
+                                    if (step === 'reviewing') return !!result;
+                                    if (step === 'summarizing_setup') return !!result && mergedTranscript.length > 0;
+                                    if (step === 'completed') return !!result && !!result.summary;
+                                    return false;
+                                })();
+
+                                const handleStepClick = () => {
+                                    if (!isClickable) return;
+                                    if (step === 'processing') {
+                                        if (confirm('現在の作業内容は破棄されます。最初からやり直しますか？')) {
+                                            setState('idle');
+                                            setFile(null);
+                                            setResult(null);
+                                        }
+                                        return;
+                                    }
+                                    if (step === 'reviewing') setState('reviewing');
+                                    if (step === 'summarizing_setup') setState('summarizing_setup');
+                                    if (step === 'completed') setState('completed');
+                                };
 
                                 return (
-                                    <div key={step} className={`step ${isActive ? 'active' : ''} ${isCompleted ? 'completed' : ''}`}>
+                                    <div
+                                        key={step}
+                                        className={`step ${isActive ? 'active' : ''} ${isCompleted ? 'completed' : ''} ${isClickable ? 'cursor-pointer hover:opacity-80' : ''}`}
+                                        onClick={handleStepClick}
+                                    >
                                         <div className="step-icon">
-                                            {isCompleted ? <CheckCircle size={20} /> : isActive ? <Loader2 size={20} className="animate-spin" /> : <div style={{ width: 20, height: 20 }} />}
+                                            {isCompleted ? <CheckCircle size={20} /> : isActive ? <Loader2 size={20} className="animate-spin" /> : <div style={{ width: 20, height: 20 }} >{idx + 1}</div>}
                                         </div>
-                                        <span className="step-label">
-                                            {step === 'transcribing' && '文字起こし'}
-                                            {step === 'diarizing' && '話者識別'}
-                                            {step === 'summarizing' && '要約・整形'}
-                                        </span>
+                                        <span className="step-label">{stepLabels[step]}</span>
                                     </div>
                                 );
                             })}
                         </div>
 
+                        {/* Transcript Review Screen */}
+                        {state === 'reviewing' && result && (
+                            <div className="result-area animate-fade-in">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="font-medium">文字起こし結果</h3>
+                                    <div className="flex gap-2">
+                                        <button className="btn btn-secondary" onClick={handleIdentifySpeakers}>
+                                            <RefreshCw size={16} /> 話者識別を実行
+                                        </button>
+                                        <button className="btn btn-primary" onClick={handleSummarize}>
+                                            要約・整形へ進む <ArrowRight size={16} />
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="transcript-box">
+                                    <table className="transcript-table">
+                                        <thead>
+                                            <tr>
+                                                <th className="w-time">Time</th>
+                                                <th className="w-speaker">Speaker</th>
+                                                <th>Content</th>
+                                                <th className="w-action"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {result.segments.map((seg, idx) => (
+                                                <tr key={idx}>
+                                                    <td className="cell-time">
+                                                        <span className="time-badge">
+                                                            {formatTime(seg.start)} - {formatTime(seg.end)}
+                                                        </span>
+                                                    </td>
+                                                    <td className="cell-speaker">
+                                                        <div className="speaker-badge">
+                                                            {seg.speaker || "Unknown"}
+                                                        </div>
+                                                    </td>
+                                                    <td className="cell-text">{seg.text}</td>
+                                                    <td className="cell-action">
+                                                        <button
+                                                            className="icon-btn"
+                                                            title="この話者を登録"
+                                                            onClick={() => openRegisterModal(seg)}
+                                                        >
+                                                            <UserPlus size={18} />
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Summary Setup Screen */}
+                        {(state === 'summarizing_setup' || state === 'summarizing') && (
+                            <div className="result-area animate-fade-in">
+                                {state === 'summarizing' ? (
+                                    <div className="flex flex-col items-center justify-center p-12 text-secondary">
+                                        <Loader2 size={48} className="animate-spin mb-4 text-primary" />
+                                        <p>AIが要約を作成中...</p>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <h3 className="font-medium mb-4">要約生成の設定</h3>
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                            <div className="col-span-2">
+                                                <h4 className="text-sm font-medium text-secondary mb-2">統合された文字起こしプレビュー</h4>
+                                                <div className="transcript-box" style={{ maxHeight: '400px' }}>
+                                                    {mergedTranscript.map((item, idx) => (
+                                                        <div key={idx} className="mb-4 pb-2 border-b border-gray-700 last:border-0">
+                                                            <div className="font-bold text-accent-primary text-sm mb-1">{item.speaker || "Unknown"}</div>
+                                                            <div className="text-sm leading-relaxed">{item.text}</div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            <div className="col-span-1">
+                                                <div className="bg-secondary p-4 rounded-lg border border-border">
+                                                    <h4 className="font-medium mb-4">プロンプト選択</h4>
+                                                    <p className="text-secondary text-sm mb-4">
+                                                        目的に合わせた要約スタイルを選択してください。
+                                                    </p>
+                                                    <div className="flex flex-col gap-3">
+                                                        {prompts.map(p => (
+                                                            <label key={p.id} className={`p-3 rounded border cursor-pointer transition-all ${selectedPromptId === p.id ? 'border-accent-primary bg-primary bg-opacity-10' : 'border-border hover:border-text-secondary'}`}>
+                                                                <input
+                                                                    type="radio"
+                                                                    name="prompt"
+                                                                    value={p.id}
+                                                                    checked={selectedPromptId === p.id}
+                                                                    onChange={() => setSelectedPromptId(p.id)}
+                                                                    className="mr-2"
+                                                                />
+                                                                <span className="font-medium">{p.name}</span>
+                                                                <div className="text-xs text-secondary mt-1 pl-5">{p.description}</div>
+                                                            </label>
+                                                        ))}
+                                                    </div>
+
+                                                    <button className="btn btn-primary w-full mt-6" onClick={handleSummarize}>
+                                                        AI要約を実行
+                                                    </button>
+
+                                                    <button className="btn btn-secondary w-full mt-2" onClick={() => setState('reviewing')}>
+                                                        戻る
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Summary / Completed Screen */}
                         {state === 'completed' && result && (
                             <div className="result-area animate-fade-in">
-                                <div className="flex flex-col gap-4">
+                                <div className="flex justify-between items-center mb-4">
                                     <h3 className="font-medium">要約結果</h3>
-                                    <div className="summary-box">
-                                        {result.summary}
-                                    </div>
                                     <div className="actions">
                                         <button className="btn btn-secondary" onClick={() => downloadFile('docx')}>
-                                            <FileText size={18} /> Wordでダウンロード
+                                            <FileText size={18} /> Word
                                         </button>
                                         <button className="btn btn-secondary" onClick={() => downloadFile('xlsx')}>
-                                            <FileSpreadsheet size={18} /> Excelでダウンロード
+                                            <FileSpreadsheet size={18} /> Excel
+                                        </button>
+                                        <button className="btn btn-secondary" onClick={() => setState('reviewing')}>
+                                            戻る
                                         </button>
                                     </div>
                                 </div>
 
-                                <div className="flex flex-col gap-4">
-                                    <h3 className="font-medium">文字起こし全文</h3>
-                                    <div className="transcript-box">
-                                        <table className="transcript-table">
-                                            <thead>
-                                                <tr>
-                                                    <th>Start</th>
-                                                    <th>End</th>
-                                                    <th>Speaker</th>
-                                                    <th>Text</th>
-                                                    <th>Action</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {result.segments.map((seg, idx) => (
-                                                    <tr key={idx}>
-                                                        <td>{formatTime(seg.start)}</td>
-                                                        <td>{formatTime(seg.end)}</td>
-                                                        <td>{seg.speaker}</td>
-                                                        <td>{seg.text}</td>
-                                                        <td>
-                                                            <button
-                                                                className="icon-btn"
-                                                                title="話者を登録"
-                                                                onClick={() => openRegisterModal(seg)}
-                                                            >
-                                                                <UserPlus size={16} />
-                                                            </button>
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
+                                <div className="summary-section animate-fade-in">
+                                    <h4>概要</h4>
+                                    <div className="summary-box mb-4">
+                                        {result.summary}
                                     </div>
+
+                                    {(result.decisions && result.decisions.length > 0) && (
+                                        <>
+                                            <h4>決定事項</h4>
+                                            <ul className="summary-list">
+                                                {result.decisions.map((d, i) => <li key={i}>{d}</li>)}
+                                            </ul>
+                                        </>
+                                    )}
+
+                                    {(result.action_items && result.action_items.length > 0) && (
+                                        <>
+                                            <h4>アクションアイテム</h4>
+                                            <ul className="summary-list">
+                                                {result.action_items.map((i, idx) => <li key={idx}>{i}</li>)}
+                                            </ul>
+                                        </>
+                                    )}
                                 </div>
+                            </div>
+                        )}
+
+                        {(state === 'processing' || state === 'summarizing') && (
+                            <div className="flex flex-col items-center justify-center p-12 text-secondary">
+                                <Loader2 size={48} className="animate-spin mb-4 text-primary" />
+                                <p>{state === 'processing' ? '音声処理中...' : 'AIが要約を作成中...'}</p>
                             </div>
                         )}
                     </div>
                 )}
             </div>
-        </div>
+        </div >
     );
 }
+

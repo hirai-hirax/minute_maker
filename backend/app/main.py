@@ -41,6 +41,27 @@ SPEAKERS_DIR = BASE_DIR / "data" / "speakers"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 SPEAKERS_DIR.mkdir(parents=True, exist_ok=True)
 
+PROMPTS_DATA = {
+    "standard": {
+        "name": "標準校正",
+        "description": "バランスの取れた標準的な要約・校正",
+        "system_prompt": "あなたは議事録作成の専門家です。以下の会議の文字起こしテキストを読み、要約、決定事項、アクションアイテムを抽出してください。\n\n出力はJSON形式で、以下のキーを含めてください:\n- summary: 会議の要約\n- decisions: 決定事項のリスト\n- action_items: アクションアイテムのリスト"
+    },
+    "detailed": {
+        "name": "詳細",
+        "description": "詳細な分析と背景情報を含む要約",
+        "system_prompt": "あなたは議事録作成の専門家です。以下の文字起こしを詳細に分析し、背景情報、議論の経緯を含めて要約してください。\n\n出力はJSON形式で、以下のキーを含めてください:\n- summary: 詳細な要約（背景含む）\n- decisions: 決定事項（経緯含む）\n- action_items: アクションアイテム（担当者明確化）"
+    },
+    "simple": {
+        "name": "簡潔",
+        "description": "要点のみを箇条書きで",
+        "system_prompt": "あなたは議事録作成の専門家です。以下の文字起こしから、要点のみを極めて簡潔に抽出してください。\n\n出力はJSON形式で、以下のキーを含めてください:\n- summary: 超簡潔な要約（3行以内）\n- decisions: 決定事項の箇条書き\n- action_items: アクションアイテムの箇条書き"
+    }
+}
+
+
+CHAT_MODEL_NAME = "gpt-4o"  # Default to gpt-4o for chat operations
+
 
 class MinuteBase(BaseModel):
     title: str = Field(..., description="Meeting or section title")
@@ -282,9 +303,14 @@ def _apply_speaker_identification(
 # Transcription Logic
 # ---------------------------------------------------------------------------
 
-def _transcribe_audio_with_diarization(audio_path: str, original_filename: str) -> List[dict]:
-    client = _create_azure_client()
-    logger.info("Starting transcription with gpt-4o-transcribe-diarize")
+def _transcribe_audio(audio_path: str, original_filename: str, model: str = "gpt-4o") -> List[dict]:
+    # Determine API version based on model
+    api_version = API_VERSION
+    if model == "whisper":
+        api_version = "2024-06-01"
+    
+    client = _create_azure_client(api_version=api_version)
+    logger.info(f"Starting transcription with model: {model}, api_version: {api_version}")
     
     # Determine mime type/extension for the API
     ext = os.path.splitext(original_filename)[1]
@@ -292,15 +318,26 @@ def _transcribe_audio_with_diarization(audio_path: str, original_filename: str) 
         ext = ".mp3"
     
     with open(audio_path, "rb") as audio_file:
-        transcript = client.audio.transcriptions.create(
-            model="gpt-4o-transcribe-diarize",
-            file=(original_filename, audio_file, f"audio/{ext.lstrip('.')}"),
-            response_format="diarized_json",
-            chunking_strategy="auto",
-        )
-    
-    transcript_dict = transcript.model_dump()
-    segments_data = transcript_dict.get("segments", [])
+        if model == "whisper":
+            response = client.audio.transcriptions.create(
+                model="whisper",
+                file=(original_filename, audio_file, f"audio/{ext.lstrip('.')}"),
+                response_format="verbose_json",
+            )
+            # Whisper returns valid JSON with segments but NO speaker info in verbose_json
+            transcript_dict = response.model_dump()
+            segments_data = transcript_dict.get("segments", [])
+            
+        else:
+            # Default to gpt-4o-transcribe-diarize
+            response = client.audio.transcriptions.create(
+                model="gpt-4o-transcribe-diarize",
+                file=(original_filename, audio_file, f"audio/{ext.lstrip('.')}"),
+                response_format="diarized_json",
+                chunking_strategy="auto",
+            )
+            transcript_dict = response.model_dump()
+            segments_data = transcript_dict.get("segments", [])
     
     results = []
     for seg in segments_data:
@@ -308,14 +345,17 @@ def _transcribe_audio_with_diarization(audio_path: str, original_filename: str) 
             "start": seg.get("start", 0.0),
             "end": seg.get("end", 0.0),
             "text": seg.get("text", "").strip(),
-            "speaker": seg.get("speaker", ""),
+            "speaker": seg.get("speaker", ""), # Whisper will imply empty string here
         })
         
     return results
 
 
 @app.post("/api/process_audio", response_model=ProcessingResult, summary="Process audio file")
-async def process_audio(file: UploadFile = File(...)):
+async def process_audio(
+    file: UploadFile = File(...),
+    model: str = Form("gpt-4o")  # 'gpt-4o' or 'whisper'
+):
     # Generate ID and save file to uploads dir for later access
     process_id = str(uuid4())
     suffix = Path(file.filename).suffix
@@ -329,7 +369,7 @@ async def process_audio(file: UploadFile = File(...)):
 
     try:
         # Run transcription with diarization logic
-        segments_data = _transcribe_audio_with_diarization(tmp_path, file.filename)
+        segments_data = _transcribe_audio(tmp_path, file.filename, model)
         
         # Load system speakers
         sys_speakers = list(SPEAKERS_DIR.glob("*.npy"))
@@ -559,6 +599,64 @@ async def identify_speakers(
     finally:
         if should_cleanup and tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+
+class SummarizeRequest(BaseModel):
+    transcript: str
+    prompt_id: str = "standard"
+
+class SummarizeResponse(BaseModel):
+    summary: str
+    action_items: List[str]
+    decisions: List[str]
+
+@app.get("/api/prompts", summary="Get available prompt presets")
+async def get_prompts():
+    return [
+        {"id": k, "name": v["name"], "description": v["description"]}
+        for k, v in PROMPTS_DATA.items()
+    ]
+
+@app.post("/api/generate_summary", response_model=SummarizeResponse, summary="Generate summary from transcript")
+async def generate_summary(req: SummarizeRequest):
+    client = _create_azure_client()
+    
+    prompt_config = PROMPTS_DATA.get(req.prompt_id, PROMPTS_DATA["standard"])
+    system_prompt = prompt_config["system_prompt"]
+    
+    user_prompt = f"""
+    Transcript:
+    {req.transcript}
+    """
+    
+    try:
+        completion = client.chat.completions.create(
+            model=CHAT_MODEL_NAME,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            response_format={"type": "json_object"}
+        )
+        
+        content = completion.choices[0].message.content
+
+        data = json.loads(content)
+        
+        return SummarizeResponse(
+            summary=data.get("summary", ""),
+            action_items=data.get("action_items", []),
+            decisions=data.get("decisions", [])
+        )
+    except Exception as e:
+        logger.error(f"Summarization failed: {e}")
+        # Fallback if JSON parsing fails or model fails
+        return SummarizeResponse(
+            summary="Failed to generate summary.",
+            action_items=[],
+            decisions=[]
+        )
+
 
 
 @app.get("/api/minutes/{minute_id}/download", summary="Download minutes as file")
