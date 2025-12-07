@@ -103,6 +103,25 @@ uv sync
 uv run uvicorn backend.app.main:app --reload
 ```
 
+**Ollama（ローカルLLM）を使用する場合:**
+```bash
+# Ollama が動作していることを確認（デフォルト: http://localhost:11434）
+ollama serve &
+
+# 必要なモデルを取得（例: llama3.1）
+ollama pull llama3.1
+
+# .env ファイルに以下を追加
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_MODEL=llama3.1
+
+# サーバー起動
+uv run uvicorn backend.app.main:app --reload
+```
+
+設定画面の「プロバイダー」で **Ollama（オンプレミス）** を選択すると、.env の値を上書きしてリクエスト時に `ollama_base_url` と `ollama_model` を指定できます（デフォルト: `http://localhost:11434/v1` / `llama3.1`）。
+
 #### 2. フロントエンド
 ```bash
 cd frontend
