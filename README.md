@@ -48,6 +48,20 @@ Minute Makerは、**セキュリティを最優先**に設計された議事録�
 5. **要約・整形**: 要約プロンプトを選択して議事録を生成
 6. **ダウンロード**: Word / Excel 形式でエクスポート
 
+## スクリーンショット
+
+### ホーム画面 (議事録作成)
+シンプルで直感的なファイルアップロード画面です。
+![Home](docs/images/home.png)
+
+### 話者管理
+登録済み話者の管理や、埋め込みファイルの生成・ダウンロードが可能です。
+![Speaker Manager](docs/images/speaker_manager.png)
+
+### 設定
+LLMプロバイダーやモデルの選択、Whisperの設定などを柔軟に変更できます。
+![Settings](docs/images/settings.png)
+
 ## クイックスタート
 
 ### 前提条件
