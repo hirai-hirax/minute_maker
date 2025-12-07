@@ -1,8 +1,9 @@
-import React, { useState, useRef } from 'react';
-import { Upload, FileAudio, CheckCircle, Loader2, FileText, FileSpreadsheet, Play, Pause, UserPlus, X, RefreshCw, ArrowRight, Paperclip } from 'lucide-react';
-import './MinuteGenerator.css';
+import React, { useState, useRef } from 'react'
+import { Upload, FileAudio, CheckCircle, Loader2, FileText, FileSpreadsheet, Play, Pause, UserPlus, X, RefreshCw, ArrowRight, Paperclip } from 'lucide-react'
+import { useI18n } from '../i18n'
+import './MinuteGenerator.css'
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 
 type ProcessState = 'idle' | 'uploading' | 'processing' | 'reviewing' | 'summarizing_setup' | 'summarizing' | 'completed' | 'error';
 
@@ -31,10 +32,10 @@ interface ProcessingResult {
 }
 
 const formatTime = (seconds: number) => {
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-};
+    const m = Math.floor(seconds / 60)
+    const s = Math.floor(seconds % 60)
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+}
 
 const getSettings = () => {
     const defaults = {
@@ -45,17 +46,123 @@ const getSettings = () => {
         whisperProvider: 'azure',
         whisperModel: 'gpt-4o',
         ossWhisperModel: 'base'
-    };
+    }
 
     try {
-        const stored = localStorage.getItem('minute-maker-settings');
-        return stored ? { ...defaults, ...JSON.parse(stored) } : defaults;
+        const stored = localStorage.getItem('minute-maker-settings')
+        return stored ? { ...defaults, ...JSON.parse(stored) } : defaults
     } catch {
-        return defaults;
+        return defaults
     }
-};
+}
+
+const STRINGS = {
+    ja: {
+        customFieldNote: 'カスタムフィールドを許可',
+        downloadTitlePrefix: '議事録',
+        registerModalTitle: '話者登録',
+        registerModalDescription: (name: string) => `以下のセグメントの音声を使用して、話者「${name}」の特徴をシステムに登録します。`,
+        registerModalNameLabel: '話者名',
+        registerModalNamePlaceholder: '例: 山田太郎',
+        cancel: 'キャンセル',
+        register: '登録する',
+        eyebrow: 'AI 自動生成',
+        heroTitle: '音声・動画から議事録を作成',
+        dropLabel: 'ファイルをドラッグ＆ドロップ',
+        dropHelp: 'または クリックして選択',
+        dropFormats: 'MP3, WAV, MP4, M4A 対応',
+        startButton: '生成を開始する',
+        stepLabels: { processing: '文字起こし', reviewing: '確認・編集', summarizing_setup: '要約・整形', completed: '完了' },
+        restartConfirm: '現在の作業内容は破棄されます。最初からやり直しますか？',
+        transcriptTitle: '文字起こし結果',
+        identifySpeakers: '話者識別を実行',
+        goToSummary: '要約・整形の確認へ',
+        registerSpeakerTitle: 'この話者を登録',
+        summarySettingsTitle: '要約生成の設定',
+        mergedTranscriptLabel: '整形済み文字起こし',
+        mergedTranscriptDescription: '確認用に複数行をまとめたテキスト形式を切り替えできます。',
+        viewList: 'リスト表示',
+        viewText: 'テキスト表示',
+        transcriptTextAria: '整形済み文字起こしのテキスト表示',
+        promptSelect: 'プロンプト選択',
+        promptSelectDescription: '目的に合わせた要約スタイルを選択してください。',
+        referenceMaterials: '参考資料',
+        referenceUploadLabel: '要約に使用する参考資料をアップロード (任意)',
+        chooseFile: 'ファイルを選択',
+        removeTitle: '削除',
+        runSummary: 'AI要約を実行',
+        back: '戻る',
+        summaryTitle: '要約結果',
+        overview: '概要',
+        decisions: '決定事項',
+        actionItems: 'アクションアイテム',
+        processingAudio: '音声処理中...',
+        generatingSummary: 'AIが要約を作成中...',
+        downloadFailed: (msg: string) => `ダウンロードに失敗しました: ${msg}`,
+        identifyComplete: '話者識別が完了しました！',
+        identifyFailed: '話者識別に失敗しました。',
+        summarizeFailed: '要約に失敗しました。',
+        registerSuccess: (name: string) => `話者「${name}」を登録しました。「話者識別を実行」を押して反映してください。`,
+        registrationError: (msg: string) => `エラー: ${msg}`,
+        unknownSpeaker: 'Unknown',
+        registerSpeaker: '話者を登録',
+    },
+    en: {
+        customFieldNote: 'Allow custom fields',
+        downloadTitlePrefix: 'minutes',
+        registerModalTitle: 'Register Speaker',
+        registerModalDescription: (name: string) => `Register the characteristics of "${name}" using the following segment.`,
+        registerModalNameLabel: 'Speaker name',
+        registerModalNamePlaceholder: 'e.g., Taro Yamada',
+        cancel: 'Cancel',
+        register: 'Register',
+        eyebrow: 'AI Generated',
+        heroTitle: 'Create meeting minutes from audio or video',
+        dropLabel: 'Drag & drop a file',
+        dropHelp: 'or click to choose',
+        dropFormats: 'Supports MP3, WAV, MP4, M4A',
+        startButton: 'Start generating',
+        stepLabels: { processing: 'Transcribe', reviewing: 'Review & edit', summarizing_setup: 'Summarize', completed: 'Complete' },
+        restartConfirm: 'Current progress will be discarded. Do you want to start over?',
+        transcriptTitle: 'Transcription results',
+        identifySpeakers: 'Identify speakers',
+        goToSummary: 'Proceed to summary setup',
+        registerSpeakerTitle: 'Register this speaker',
+        summarySettingsTitle: 'Summary settings',
+        mergedTranscriptLabel: 'Structured transcript',
+        mergedTranscriptDescription: 'Switch views of the merged transcript for review.',
+        viewList: 'List view',
+        viewText: 'Text view',
+        transcriptTextAria: 'Text view of structured transcript',
+        promptSelect: 'Prompt selection',
+        promptSelectDescription: 'Choose the summarization style.',
+        referenceMaterials: 'Reference files',
+        referenceUploadLabel: 'Upload optional reference files for the summary',
+        chooseFile: 'Choose files',
+        removeTitle: 'Remove',
+        runSummary: 'Run AI summary',
+        back: 'Back',
+        summaryTitle: 'Summary results',
+        overview: 'Overview',
+        decisions: 'Decisions',
+        actionItems: 'Action items',
+        processingAudio: 'Processing audio...',
+        generatingSummary: 'Generating summary...',
+        downloadFailed: (msg: string) => `Failed to download: ${msg}`,
+        identifyComplete: 'Speaker identification complete!',
+        identifyFailed: 'Failed to identify speakers.',
+        summarizeFailed: 'Summarization failed.',
+        registerSuccess: (name: string) => `Speaker "${name}" registered successfully. Click "Identify speakers" to apply changes.`,
+        registrationError: (msg: string) => `Error: ${msg}`,
+        unknownSpeaker: 'Unknown',
+        registerSpeaker: 'Register speaker',
+    }
+} as const
 
 export function MinuteGenerator() {
+    const { language } = useI18n()
+    const text = STRINGS[language]
+
     const [state, setState] = useState<ProcessState>('idle');
     const [file, setFile] = useState<File | null>(null);
     const [result, setResult] = useState<ProcessingResult | null>(null);
@@ -151,10 +258,10 @@ export function MinuteGenerator() {
             const data = await response.json();
             setResult({ ...result, segments: data.segments, speakers: data.speakers, transcript: data.transcript });
             setState('reviewing');
-            alert('Speaker identification complete!');
+            alert(text.identifyComplete);
         } catch (err) {
             console.error(err);
-            alert('Failed to identify speakers.');
+            alert(text.identifyFailed);
             setState('reviewing');
         }
     };
@@ -168,7 +275,7 @@ export function MinuteGenerator() {
         let currentText: string[] = [];
 
         result.segments.forEach((seg) => {
-            const speakerName = seg.speaker || "Unknown";
+            const speakerName = seg.speaker || text.unknownSpeaker
 
             if (speakerName !== currentSpeaker) {
                 if (currentText.length > 0) {
@@ -194,9 +301,9 @@ export function MinuteGenerator() {
 
     const formattedTranscriptText = React.useMemo(() => {
         return mergedTranscript
-            .map((item) => `${item.speaker || 'Unknown'}: ${item.text}`)
+            .map((item) => `${item.speaker || text.unknownSpeaker}: ${item.text}`)
             .join("\n\n");
-    }, [mergedTranscript]);
+    }, [mergedTranscript, text.unknownSpeaker]);
 
     const handleReferenceFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files) {
@@ -249,7 +356,7 @@ export function MinuteGenerator() {
             setState('completed');
         } catch (err) {
             console.error(err);
-            alert('Summarization failed.');
+            alert(text.summarizeFailed);
             setState('summarizing_setup');
         }
     };
@@ -274,10 +381,10 @@ export function MinuteGenerator() {
                 throw new Error(err.detail || 'Registration failed');
             }
 
-            alert(`Speaker "${registerModal.name}" registered successfully! Click "Identify Speakers" to apply changes.`);
+            alert(text.registerSuccess(registerModal.name));
             setRegisterModal({ isOpen: false, segment: null, name: '' });
         } catch (e: any) {
-            alert(`Error: ${e.message}`);
+            alert(text.registrationError(e.message));
         }
     };
 
@@ -293,11 +400,12 @@ export function MinuteGenerator() {
         if (!result) return;
 
         try {
+            const dateLocale = language === 'ja' ? 'ja-JP' : 'en-US'
             const response = await fetch(`${API_BASE}/api/download_minutes?format=${type}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    title: `議事録_${new Date().toLocaleDateString('ja-JP').replace(/\//g, '-')}`,
+                    title: `${text.downloadTitlePrefix}_${new Date().toLocaleDateString(dateLocale).replace(/\//g, '-')}`,
                     summary: result.summary || '',
                     decisions: result.decisions || [],
                     action_items: result.action_items || [],
@@ -318,14 +426,14 @@ export function MinuteGenerator() {
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `議事録_${new Date().toISOString().split('T')[0]}.${type}`;
+            a.download = `${text.downloadTitlePrefix}_${new Date().toISOString().split('T')[0]}.${type}`;
             document.body.appendChild(a);
             a.click();
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
         } catch (err) {
             console.error(err);
-            alert(`ダウンロードに失敗しました: ${err instanceof Error ? err.message : 'Unknown error'}`);
+            alert(text.downloadFailed(err instanceof Error ? err.message : 'Unknown error'));
         }
     };
 
@@ -335,34 +443,34 @@ export function MinuteGenerator() {
                 <div className="modal-overlay">
                     <div className="modal-content">
                         <div className="modal-header">
-                            <h3>話者登録</h3>
+                            <h3>{text.registerModalTitle}</h3>
                             <button onClick={() => setRegisterModal({ ...registerModal, isOpen: false })}>
                                 <X size={20} />
                             </button>
                         </div>
                         <div className="modal-body">
                             <p className="text-sm text-secondary mb-4">
-                                以下のセグメントの音声を使用して、話者「{registerModal.name}」の特徴をシステムに登録します。
+                                {text.registerModalDescription(registerModal.name)}
                             </p>
                             <div className="segment-preview">
                                 "{registerModal.segment?.text}"
                             </div>
-                            <label className="input-label mt-4">話者名</label>
+                            <label className="input-label mt-4">{text.registerModalNameLabel}</label>
                             <input
                                 type="text"
                                 className="input-field"
                                 value={registerModal.name}
                                 onChange={(e) => setRegisterModal({ ...registerModal, name: e.target.value })}
-                                placeholder="例: 山田太郎"
+                                placeholder={text.registerModalNamePlaceholder}
                                 autoFocus
                             />
                         </div>
                         <div className="modal-footer">
                             <button className="btn btn-secondary" onClick={() => setRegisterModal({ ...registerModal, isOpen: false })}>
-                                キャンセル
+                                {text.cancel}
                             </button>
                             <button className="btn btn-primary" onClick={handleRegisterSpeaker}>
-                                登録する
+                                {text.register}
                             </button>
                         </div>
                     </div>
@@ -371,8 +479,8 @@ export function MinuteGenerator() {
             <div className="card">
                 <div className="card__header mb-4">
                     <div>
-                        <p className="eyebrow text-accent-primary">AI 自動生成</p>
-                        <h2>音声・動画から議事録を作成</h2>
+                        <p className="eyebrow text-accent-primary">{text.eyebrow}</p>
+                        <h2>{text.heroTitle}</h2>
                     </div>
                 </div>
 
@@ -393,9 +501,9 @@ export function MinuteGenerator() {
                         <div className="upload-icon">
                             {file ? <FileAudio size={48} /> : <Upload size={48} />}
                         </div>
-                        <h3>{file ? file.name : "ファイルをドラッグ＆ドロップ"}</h3>
-                        <p className="text-secondary mt-4">または クリックして選択</p>
-                        <p className="text-sm text-secondary mt-2 mb-6">MP3, WAV, MP4, M4A 対応</p>
+                        <h3>{file ? file.name : text.dropLabel}</h3>
+                        <p className="text-secondary mt-4">{text.dropHelp}</p>
+                        <p className="text-sm text-secondary mt-2 mb-6">{text.dropFormats}</p>
 
 
                         {file && (
@@ -403,7 +511,7 @@ export function MinuteGenerator() {
                                 className="btn btn-primary mt-8"
                                 onClick={(e) => { e.stopPropagation(); startProcess(); }}
                             >
-                                生成を開始する
+                                {text.startButton}
                             </button>
                         )}
                     </div>
@@ -413,7 +521,7 @@ export function MinuteGenerator() {
                     <div className="process-view">
                         <div className="progress-steps">
                             {['processing', 'reviewing', 'summarizing_setup', 'completed'].map((step, idx) => {
-                                const stepLabels: any = { processing: '文字起こし', reviewing: '確認・編集', summarizing_setup: '要約・整形', completed: '完了' };
+                                const stepLabels: any = text.stepLabels;
                                 let visualState = state;
                                 if (state === 'summarizing') visualState = 'summarizing_setup';
                                 if (state === 'uploading') visualState = 'processing';
@@ -430,8 +538,8 @@ export function MinuteGenerator() {
                                 }
 
                                 // Navigation Logic
-                                const isClickable = (() => {
-                                    if (state === 'uploading' || state === 'processing' || state === 'summarizing') return false;
+                                    const isClickable = (() => {
+                                        if (state === 'uploading' || state === 'processing' || state === 'summarizing') return false;
 
                                     // Target step check
                                     if (step === 'processing') return true;
@@ -441,13 +549,13 @@ export function MinuteGenerator() {
                                     return false;
                                 })();
 
-                                const handleStepClick = () => {
-                                    if (!isClickable) return;
-                                    if (step === 'processing') {
-                                        if (confirm('現在の作業内容は破棄されます。最初からやり直しますか？')) {
-                                            setState('idle');
-                                            setFile(null);
-                                            setResult(null);
+                                    const handleStepClick = () => {
+                                        if (!isClickable) return;
+                                        if (step === 'processing') {
+                                            if (confirm(text.restartConfirm)) {
+                                                setState('idle');
+                                                setFile(null);
+                                                setResult(null);
                                         }
                                         return;
                                     }
@@ -475,13 +583,13 @@ export function MinuteGenerator() {
                         {state === 'reviewing' && result && (
                             <div className="result-area animate-fade-in">
                                 <div className="flex justify-between items-center mb-4">
-                                    <h3 className="font-medium">文字起こし結果</h3>
+                                    <h3 className="font-medium">{text.transcriptTitle}</h3>
                                     <div className="flex gap-2">
                                         <button className="btn btn-secondary" onClick={handleIdentifySpeakers}>
-                                            <RefreshCw size={16} /> 話者識別を実行
+                                            <RefreshCw size={16} /> {text.identifySpeakers}
                                         </button>
                                         <button className="btn btn-primary" onClick={prepareSummarySetup}>
-                                            要約・整形の確認へ <ArrowRight size={16} />
+                                            {text.goToSummary} <ArrowRight size={16} />
                                         </button>
                                     </div>
                                 </div>
@@ -505,14 +613,14 @@ export function MinuteGenerator() {
                                                     </td>
                                                     <td className="cell-speaker">
                                                         <div className="speaker-badge">
-                                                            {seg.speaker || "Unknown"}
+                                                            {seg.speaker || text.unknownSpeaker}
                                                         </div>
                                                     </td>
                                                     <td className="cell-text">{seg.text}</td>
                                                     <td className="cell-action">
                                                         <button
                                                             className="icon-btn"
-                                                            title="この話者を登録"
+                                                            title={text.registerSpeakerTitle}
                                                             onClick={() => openRegisterModal(seg)}
                                                         >
                                                             <UserPlus size={18} />
@@ -532,17 +640,17 @@ export function MinuteGenerator() {
                                 {state === 'summarizing' ? (
                                     <div className="flex flex-col items-center justify-center p-12 text-secondary">
                                         <Loader2 size={48} className="animate-spin mb-4 text-primary" />
-                                        <p>AIが要約を作成中...</p>
+                                        <p>{text.generatingSummary}</p>
                                     </div>
                                 ) : (
                                     <>
-                                        <h3 className="font-medium mb-4">要約生成の設定</h3>
+                                        <h3 className="font-medium mb-4">{text.summarySettingsTitle}</h3>
                                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                                             <div className="col-span-2">
                                                 <div className="flex items-start justify-between gap-4 mb-2 flex-wrap">
                                                     <div>
-                                                        <h4 className="text-sm font-medium text-secondary">整形済み文字起こし</h4>
-                                                        <p className="text-xs text-secondary mt-1">確認用に複数行をまとめたテキスト形式を切り替えできます。</p>
+                                                        <h4 className="text-sm font-medium text-secondary">{text.mergedTranscriptLabel}</h4>
+                                                        <p className="text-xs text-secondary mt-1">{text.mergedTranscriptDescription}</p>
                                                     </div>
                                                     <div className="view-toggle">
                                                         <button
@@ -550,14 +658,14 @@ export function MinuteGenerator() {
                                                             onClick={() => setTranscriptViewMode('structured')}
                                                             type="button"
                                                         >
-                                                            リスト表示
+                                                            {text.viewList}
                                                         </button>
                                                         <button
                                                             className={`toggle-btn ${transcriptViewMode === 'text' ? 'active' : ''}`}
                                                             onClick={() => setTranscriptViewMode('text')}
                                                             type="button"
                                                         >
-                                                            テキスト表示
+                                                            {text.viewText}
                                                         </button>
                                                     </div>
                                                 </div>
@@ -565,7 +673,7 @@ export function MinuteGenerator() {
                                                     <div className="transcript-box" style={{ maxHeight: '400px' }}>
                                                         {mergedTranscript.map((item, idx) => (
                                                             <div key={idx} className="mb-4 pb-2 border-b border-gray-700 last:border-0">
-                                                                <div className="font-bold text-accent-primary text-sm mb-1">{item.speaker || "Unknown"}</div>
+                                                                <div className="font-bold text-accent-primary text-sm mb-1">{item.speaker || text.unknownSpeaker}</div>
                                                                 <div className="text-sm leading-relaxed">{item.text}</div>
                                                             </div>
                                                         ))}
@@ -575,15 +683,15 @@ export function MinuteGenerator() {
                                                         className="transcript-textarea"
                                                         value={formattedTranscriptText}
                                                         readOnly
-                                                        aria-label="整形済み文字起こしのテキスト表示"
+                                                        aria-label={text.transcriptTextAria}
                                                     />
                                                 )}
                                             </div>
                                             <div className="col-span-1">
                                                 <div className="bg-secondary p-4 rounded-lg border border-border">
-                                                    <h4 className="font-medium mb-4">プロンプト選択</h4>
+                                                    <h4 className="font-medium mb-4">{text.promptSelect}</h4>
                                                     <p className="text-secondary text-sm mb-4">
-                                                        目的に合わせた要約スタイルを選択してください。
+                                                        {text.promptSelectDescription}
                                                     </p>
                                                     <div className="flex flex-col gap-3">
                                                         {prompts.map(p => (
@@ -605,10 +713,10 @@ export function MinuteGenerator() {
                                                     <div className="mt-6 pt-4 border-t border-border">
                                                         <h4 className="font-medium mb-2 flex items-center gap-2">
                                                             <Paperclip size={18} />
-                                                            参考資料
+                                                            {text.referenceMaterials}
                                                         </h4>
                                                         <p className="text-secondary text-xs mb-3">
-                                                            要約に使用する参考資料をアップロード (任意)
+                                                            {text.referenceUploadLabel}
                                                         </p>
 
                                                         <input
@@ -626,7 +734,7 @@ export function MinuteGenerator() {
                                                             type="button"
                                                         >
                                                             <Paperclip size={16} />
-                                                            ファイルを選択
+                                                            {text.chooseFile}
                                                         </button>
 
                                                         {referenceFiles.length > 0 && (
@@ -638,7 +746,7 @@ export function MinuteGenerator() {
                                                                             className="remove-btn"
                                                                             onClick={() => removeReferenceFile(idx)}
                                                                             type="button"
-                                                                            title="削除"
+                                                                            title={text.removeTitle}
                                                                         >
                                                                             <X size={14} />
                                                                         </button>
@@ -651,11 +759,11 @@ export function MinuteGenerator() {
 
 
                                                     <button className="btn btn-primary w-full mt-6" onClick={handleSummarize}>
-                                                        AI要約を実行
+                                                        {text.runSummary}
                                                     </button>
 
                                                     <button className="btn btn-secondary w-full mt-2" onClick={() => setState('reviewing')}>
-                                                        戻る
+                                                        {text.back}
                                                     </button>
                                                 </div>
                                             </div>
@@ -669,7 +777,7 @@ export function MinuteGenerator() {
                         {state === 'completed' && result && (
                             <div className="result-area animate-fade-in">
                                 <div className="flex justify-between items-center mb-4">
-                                    <h3 className="font-medium">要約結果</h3>
+                                    <h3 className="font-medium">{text.summaryTitle}</h3>
                                     <div className="actions">
                                         <button className="btn btn-secondary" onClick={() => downloadFile('docx')}>
                                             <FileText size={18} /> Word
@@ -678,7 +786,7 @@ export function MinuteGenerator() {
                                             <FileSpreadsheet size={18} /> Excel
                                         </button>
                                         <button className="btn btn-secondary" onClick={() => setState('reviewing')}>
-                                            戻る
+                                            {text.back}
                                         </button>
                                     </div>
                                 </div>
@@ -686,7 +794,7 @@ export function MinuteGenerator() {
                                 <div className="summary-section animate-fade-in">
                                     {result.summary && (
                                         <>
-                                            <h4>概要</h4>
+                                            <h4>{text.overview}</h4>
                                             <div className="summary-box mb-4">
                                                 {result.summary}
                                             </div>
@@ -695,7 +803,7 @@ export function MinuteGenerator() {
 
                                     {(result.decisions && result.decisions.length > 0) && (
                                         <>
-                                            <h4>決定事項</h4>
+                                            <h4>{text.decisions}</h4>
                                             <ul className="summary-list">
                                                 {result.decisions.map((d, i) => <li key={i}>{d}</li>)}
                                             </ul>
@@ -704,7 +812,7 @@ export function MinuteGenerator() {
 
                                     {(result.action_items && result.action_items.length > 0) && (
                                         <>
-                                            <h4>アクションアイテム</h4>
+                                            <h4>{text.actionItems}</h4>
                                             <ul className="summary-list">
                                                 {result.action_items.map((i, idx) => <li key={idx}>{i}</li>)}
                                             </ul>
@@ -744,7 +852,7 @@ export function MinuteGenerator() {
                         {(state === 'processing' || state === 'summarizing') && (
                             <div className="flex flex-col items-center justify-center p-12 text-secondary">
                                 <Loader2 size={48} className="animate-spin mb-4 text-primary" />
-                                <p>{state === 'processing' ? '音声処理中...' : 'AIが要約を作成中...'}</p>
+                                <p>{state === 'processing' ? text.processingAudio : text.generatingSummary}</p>
                             </div>
                         )}
                     </div>
