@@ -41,6 +41,7 @@ const getSettings = () => {
         llmProvider: 'azure',
         ollamaBaseUrl: 'http://localhost:11434/v1',
         ollamaModel: 'llama3.1',
+        summaryModel: 'gpt-4o',
         whisperProvider: 'azure',
         whisperModel: 'gpt-4o',
         ossWhisperModel: 'base'
@@ -213,12 +214,21 @@ export function MinuteGenerator() {
         setState('summarizing');
 
         const transcriptText = mergedTranscript.map(m => `${m.speaker}: ${m.text}`).join("\n");
+        const settings = getSettings();
 
         try {
             // Use FormData to support file uploads
             const formData = new FormData();
             formData.append('transcript', transcriptText);
             formData.append('prompt_id', selectedPromptId);
+            formData.append('llm_provider', settings.llmProvider);
+
+            if (settings.llmProvider === 'ollama') {
+                formData.append('ollama_base_url', settings.ollamaBaseUrl);
+                formData.append('ollama_model', settings.ollamaModel);
+            } else {
+                formData.append('azure_model', settings.summaryModel);
+            }
 
             // Append reference files
             referenceFiles.forEach(file => {
