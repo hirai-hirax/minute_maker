@@ -1,66 +1,81 @@
-import React, { useState, useEffect } from 'react';
-import { Save, RotateCcw, CheckCircle2 } from 'lucide-react';
-import './Settings.css';
+import React, { useState, useEffect } from 'react'
+import { Save, RotateCcw, CheckCircle2 } from 'lucide-react'
+import './Settings.css'
 
 interface AppSettings {
-    llmProvider: 'azure' | 'ollama';
-    ollamaBaseUrl: string;
-    ollamaModel: string;
-    whisperProvider: 'azure' | 'faster-whisper';
-    whisperModel: 'gpt-4o' | 'whisper';
-    ossWhisperModel: 'tiny' | 'base' | 'small' | 'medium' | 'large-v2' | 'large-v3';
+    llmProvider: 'azure' | 'ollama'
+    ollamaBaseUrl: string
+    ollamaModel: string
+    summaryModel: 'gpt-4o' | 'gpt-4o-mini'
+    whisperProvider: 'azure' | 'faster-whisper'
+    whisperModel: 'gpt-4o' | 'whisper'
+    ossWhisperModel: 'tiny' | 'base' | 'small' | 'medium' | 'large-v2' | 'large-v3'
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
     llmProvider: 'azure',
     ollamaBaseUrl: 'http://localhost:11434/v1',
     ollamaModel: 'llama3.1',
+    summaryModel: 'gpt-4o',
     whisperProvider: 'azure',
     whisperModel: 'gpt-4o',
     ossWhisperModel: 'base'
-};
+}
+
+const AZURE_SUMMARY_MODELS: { value: AppSettings['summaryModel']; label: string; description: string }[] = [
+    {
+        value: 'gpt-4o',
+        label: 'GPT-4o',
+        description: '高品質な要約を高精度で生成'
+    },
+    {
+        value: 'gpt-4o-mini',
+        label: 'GPT-4o mini',
+        description: '軽量・高速でコストを抑えた生成'
+    }
+]
 
 export function Settings() {
-    const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
-    const [saveSuccess, setSaveSuccess] = useState(false);
+    const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
+    const [saveSuccess, setSaveSuccess] = useState(false)
 
     useEffect(() => {
         // Load settings from localStorage
         try {
-            const stored = localStorage.getItem('minute-maker-settings');
+            const stored = localStorage.getItem('minute-maker-settings')
             if (stored) {
-                setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(stored) });
+                setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(stored) })
             }
         } catch (error) {
-            console.error('Failed to load settings:', error);
+            console.error('Failed to load settings:', error)
         }
-    }, []);
+    }, [])
 
     const handleSave = () => {
         try {
-            localStorage.setItem('minute-maker-settings', JSON.stringify(settings));
-            setSaveSuccess(true);
-            setTimeout(() => setSaveSuccess(false), 3000);
+            localStorage.setItem('minute-maker-settings', JSON.stringify(settings))
+            setSaveSuccess(true)
+            setTimeout(() => setSaveSuccess(false), 3000)
         } catch (error) {
-            console.error('Failed to save settings:', error);
-            alert('設定の保存に失敗しました');
+            console.error('Failed to save settings:', error)
+            alert('設定の保存に失敗しました')
         }
-    };
+    }
 
     const handleReset = () => {
         if (confirm('設定をデフォルトに戻しますか？')) {
-            setSettings(DEFAULT_SETTINGS);
-            localStorage.removeItem('minute-maker-settings');
-            setSaveSuccess(true);
-            setTimeout(() => setSaveSuccess(false), 3000);
+            setSettings(DEFAULT_SETTINGS)
+            localStorage.removeItem('minute-maker-settings')
+            setSaveSuccess(true)
+            setTimeout(() => setSaveSuccess(false), 3000)
         }
-    };
+    }
 
     return (
         <div className="settings-container">
             <div className="settings-header">
                 <h2>設定</h2>
-                <p className="settings-subtitle">LLMプロバイダーと文字起こしモデルを選択してください</p>
+                <p className="settings-subtitle">要約用のLLMモデルと文字起こしモデルを選択してください</p>
             </div>
 
             {/* LLM Provider Settings */}
@@ -80,6 +95,26 @@ export function Settings() {
                             <span className="radio-description">クラウドベースのGPT-4o（高品質・高速）</span>
                         </div>
                     </label>
+
+                    {settings.llmProvider === 'azure' && (
+                        <div className="nested-settings">
+                            <div className="input-group">
+                                <label htmlFor="summaryModel">要約モデル</label>
+                                <select
+                                    id="summaryModel"
+                                    value={settings.summaryModel}
+                                    onChange={(e) => setSettings({ ...settings, summaryModel: e.target.value as AppSettings['summaryModel'] })}
+                                >
+                                    {AZURE_SUMMARY_MODELS.map(model => (
+                                        <option key={model.value} value={model.value}>
+                                            {model.label}（{model.description}）
+                                        </option>
+                                    ))}
+                                </select>
+                                <small>要約に使用するAzure OpenAIのモデルを選択します</small>
+                            </div>
+                        </div>
+                    )}
 
                     <label className="radio-label">
                         <input
@@ -212,5 +247,5 @@ export function Settings() {
                 </div>
             )}
         </div>
-    );
+    )
 }

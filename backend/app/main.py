@@ -991,6 +991,7 @@ class SummarizeRequest(BaseModel):
     llm_provider: Optional[str] = None  # Override provider: 'azure' or 'ollama'
     ollama_base_url: Optional[str] = None  # Ollama URL
     ollama_model: Optional[str] = None  # Ollama model name
+    azure_model: Optional[str] = None  # Azure OpenAI model/deployment name
 
 class SummarizeResponse(BaseModel):
     # 基本フィールド(後方互換性のため保持)
@@ -1104,6 +1105,7 @@ async def generate_summary(
     llm_provider: Optional[str] = Form(None),
     ollama_base_url: Optional[str] = Form(None),
     ollama_model: Optional[str] = Form(None),
+    azure_model: Optional[str] = Form(None),
     reference_files: List[UploadFile] = File(default=[])
 ):
     """
@@ -1115,6 +1117,7 @@ async def generate_summary(
         llm_provider: LLM provider ('azure' or 'ollama')
         ollama_base_url: Base URL for Ollama (if using Ollama)
         ollama_model: Model name for Ollama (if using Ollama)
+        azure_model: Azure OpenAI model/deployment name (if overriding default)
         reference_files: Optional reference documents (.docx, .xlsx, .pptx, .pdf, .txt)
     """
     from .document_parser import extract_text_from_file
@@ -1129,7 +1132,9 @@ async def generate_summary(
         model_name = ollama_model
     else:
         client = _create_llm_client()
-        model_name = CHAT_MODEL_NAME
+        model_name = azure_model or CHAT_MODEL_NAME
+        if azure_model:
+            logger.info(f"Using Azure model override for summarization: {azure_model}")
     
     prompt_config = PROMPTS_DATA.get(prompt_id, PROMPTS_DATA["standard"])
     system_prompt = prompt_config["system_prompt"]
