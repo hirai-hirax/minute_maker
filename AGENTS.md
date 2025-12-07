@@ -51,6 +51,9 @@
   - Implemented state preservation when switching between tabs.
   - All tab components remain mounted and use CSS display property for show/hide.
   - Users can now navigate between tabs without losing their work in progress.
+- **Note: Settings LLM Model Selection**
+  - Settings 画面で使用する LLM モデルを選択できる旨を README.md に明記しました。
+  - 現行実装では GPT-4o などのモデルを選択して議事録生成に利用できます。
 
 ## Pending Tasks
 - [x] Implement summary generation logic (Done via Azure OpenAI).
