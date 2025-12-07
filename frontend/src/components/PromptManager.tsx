@@ -1,8 +1,70 @@
-import React, { useState, useEffect } from 'react';
-import { Save, Plus, Edit2, Trash2, X, CheckCircle2, FileText } from 'lucide-react';
-import './PromptManager.css';
+import React, { useState, useEffect } from 'react'
+import { Save, Plus, Edit2, Trash2, X, CheckCircle2, FileText } from 'lucide-react'
+import './PromptManager.css'
+import { useI18n } from '../i18n'
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
+
+const TEXT = {
+    ja: {
+        loadFail: 'プロンプトの読み込みに失敗しました',
+        missingFields: 'すべてのフィールドを入力してください',
+        createFail: 'プロンプトの作成に失敗しました',
+        updateFail: 'プロンプトの更新に失敗しました',
+        deleteConfirm: 'このプロンプトを削除してもよろしいですか？',
+        deleteFail: 'プロンプトの削除に失敗しました',
+        defaultEditBlock: 'デフォルトプロンプトは編集できません',
+        loading: '読み込み中...',
+        title: 'プロンプト管理',
+        subtitle: '要約生成用のプロンプトを管理します',
+        newPrompt: '新規プロンプト作成',
+        editPrompt: 'プロンプト編集',
+        promptName: 'プロンプト名',
+        namePlaceholder: '例: 簡潔な要約',
+        description: '説明',
+        descriptionPlaceholder: '例: 簡潔で分かりやすい要約を生成',
+        systemPrompt: 'システムプロンプト',
+        systemPlaceholder: 'あなたは議事録作成の専門家です。...',
+        systemHint: 'LLMに送信される指示文です。要約の形式や出力フォーマットを指定してください。',
+        cancel: 'キャンセル',
+        update: '更新',
+        create: '作成',
+        defaultBadge: 'デフォルト',
+        systemPromptLabel: 'システムプロンプト:',
+        edit: '編集',
+        delete: '削除',
+        saved: '保存しました',
+    },
+    en: {
+        loadFail: 'Failed to load prompts',
+        missingFields: 'Please complete all fields.',
+        createFail: 'Failed to create prompt',
+        updateFail: 'Failed to update prompt',
+        deleteConfirm: 'Are you sure you want to delete this prompt?',
+        deleteFail: 'Failed to delete prompt',
+        defaultEditBlock: 'Default prompts cannot be edited',
+        loading: 'Loading...',
+        title: 'Prompt Manager',
+        subtitle: 'Manage prompts used for summarization',
+        newPrompt: 'Create prompt',
+        editPrompt: 'Edit prompt',
+        promptName: 'Prompt name',
+        namePlaceholder: 'e.g., Concise summary',
+        description: 'Description',
+        descriptionPlaceholder: 'e.g., Generate a concise and clear summary',
+        systemPrompt: 'System prompt',
+        systemPlaceholder: 'You are a meeting-minutes expert...',
+        systemHint: 'Instruction sent to the LLM. Specify the summary style and output format.',
+        cancel: 'Cancel',
+        update: 'Update',
+        create: 'Create',
+        defaultBadge: 'Default',
+        systemPromptLabel: 'System prompt:',
+        edit: 'Edit',
+        delete: 'Delete',
+        saved: 'Saved',
+    }
+} as const
 
 interface Prompt {
     id: string;
@@ -13,6 +75,9 @@ interface Prompt {
 }
 
 export function PromptManager() {
+    const { language } = useI18n()
+    const text = TEXT[language]
+
     const [prompts, setPrompts] = useState<Prompt[]>([]);
     const [loading, setLoading] = useState(true);
     const [saveSuccess, setSaveSuccess] = useState(false);
@@ -36,7 +101,7 @@ export function PromptManager() {
             setPrompts(data);
         } catch (error) {
             console.error('Failed to load prompts:', error);
-            alert('プロンプトの読み込みに失敗しました');
+            alert(text.loadFail);
         } finally {
             setLoading(false);
         }
@@ -44,7 +109,7 @@ export function PromptManager() {
 
     const handleCreate = async () => {
         if (!formData.name.trim() || !formData.description.trim() || !formData.system_prompt.trim()) {
-            alert('すべてのフィールドを入力してください');
+            alert(text.missingFields);
             return;
         }
 
@@ -67,7 +132,7 @@ export function PromptManager() {
             await loadPrompts();
         } catch (error) {
             console.error('Failed to create prompt:', error);
-            alert(`プロンプトの作成に失敗しました: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            alert(`${text.createFail}: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
     };
 
@@ -97,12 +162,12 @@ export function PromptManager() {
             await loadPrompts();
         } catch (error) {
             console.error('Failed to update prompt:', error);
-            alert(`プロンプトの更新に失敗しました: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            alert(`${text.updateFail}: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
     };
 
     const handleDelete = async (promptId: string) => {
-        if (!confirm('このプロンプトを削除してもよろしいですか？')) return;
+        if (!confirm(text.deleteConfirm)) return;
 
         try {
             const response = await fetch(`${API_BASE}/api/prompts/${promptId}`, {
@@ -119,13 +184,13 @@ export function PromptManager() {
             await loadPrompts();
         } catch (error) {
             console.error('Failed to delete prompt:', error);
-            alert(`プロンプトの削除に失敗しました: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            alert(`${text.deleteFail}: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
     };
 
     const startEdit = (prompt: Prompt) => {
         if (prompt.is_default) {
-            alert('デフォルトプロンプトは編集できません');
+            alert(text.defaultEditBlock);
             return;
         }
         setEditingPrompt(prompt);
@@ -152,7 +217,7 @@ export function PromptManager() {
     if (loading) {
         return (
             <div className="prompt-manager-container">
-                <div className="loading">読み込み中...</div>
+                <div className="loading">{text.loading}</div>
             </div>
         );
     }
@@ -161,13 +226,13 @@ export function PromptManager() {
         <div className="prompt-manager-container">
             <div className="prompt-manager-header">
                 <div>
-                    <h2>プロンプト管理</h2>
-                    <p className="prompt-manager-subtitle">要約生成用のプロンプトを管理します</p>
+                    <h2>{text.title}</h2>
+                    <p className="prompt-manager-subtitle">{text.subtitle}</p>
                 </div>
                 {!isCreating && !editingPrompt && (
                     <button className="btn-primary" onClick={startCreate}>
                         <Plus size={16} />
-                        新規プロンプト作成
+                        {text.newPrompt}
                     </button>
                 )}
             </div>
@@ -176,57 +241,57 @@ export function PromptManager() {
             {(isCreating || editingPrompt) && (
                 <div className="prompt-form-card">
                     <div className="prompt-form-header">
-                        <h3>{editingPrompt ? 'プロンプト編集' : '新規プロンプト作成'}</h3>
+                        <h3>{editingPrompt ? text.editPrompt : text.newPrompt}</h3>
                         <button className="icon-btn" onClick={cancelEdit}>
                             <X size={20} />
                         </button>
                     </div>
                     <div className="prompt-form-body">
                         <div className="input-group">
-                            <label htmlFor="prompt-name">プロンプト名</label>
+                            <label htmlFor="prompt-name">{text.promptName}</label>
                             <input
                                 type="text"
                                 id="prompt-name"
                                 value={formData.name}
                                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                placeholder="例: 簡潔な要約"
+                                placeholder={text.namePlaceholder}
                                 maxLength={100}
                             />
                         </div>
                         <div className="input-group">
-                            <label htmlFor="prompt-description">説明</label>
+                            <label htmlFor="prompt-description">{text.description}</label>
                             <input
                                 type="text"
                                 id="prompt-description"
                                 value={formData.description}
                                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                                placeholder="例: 簡潔で分かりやすい要約を生成"
+                                placeholder={text.descriptionPlaceholder}
                                 maxLength={200}
                             />
                         </div>
                         <div className="input-group">
-                            <label htmlFor="prompt-system">システムプロンプト</label>
+                            <label htmlFor="prompt-system">{text.systemPrompt}</label>
                             <textarea
                                 id="prompt-system"
                                 value={formData.system_prompt}
                                 onChange={(e) => setFormData({ ...formData, system_prompt: e.target.value })}
-                                placeholder="あなたは議事録作成の専門家です。..."
+                                placeholder={text.systemPlaceholder}
                                 rows={8}
                             />
                             <small className="help-text">
-                                LLMに送信される指示文です。要約の形式や出力フォーマットを指定してください。
+                                {text.systemHint}
                             </small>
                         </div>
                         <div className="form-actions">
                             <button className="btn-secondary" onClick={cancelEdit}>
-                                キャンセル
+                                {text.cancel}
                             </button>
                             <button
                                 className="btn-primary"
                                 onClick={editingPrompt ? handleUpdate : handleCreate}
                             >
                                 <Save size={16} />
-                                {editingPrompt ? '更新' : '作成'}
+                                {editingPrompt ? text.update : text.create}
                             </button>
                         </div>
                     </div>
@@ -243,12 +308,12 @@ export function PromptManager() {
                                 <h3>{prompt.name}</h3>
                             </div>
                             {prompt.is_default && (
-                                <span className="badge-default">デフォルト</span>
+                                <span className="badge-default">{text.defaultBadge}</span>
                             )}
                         </div>
                         <p className="prompt-card-description">{prompt.description}</p>
                         <div className="prompt-card-preview">
-                            <strong>システムプロンプト:</strong>
+                            <strong>{text.systemPromptLabel}</strong>
                             <div className="prompt-preview-text">
                                 {prompt.system_prompt.substring(0, 150)}
                                 {prompt.system_prompt.length > 150 && '...'}
@@ -261,14 +326,14 @@ export function PromptManager() {
                                     onClick={() => startEdit(prompt)}
                                 >
                                     <Edit2 size={14} />
-                                    編集
+                                    {text.edit}
                                 </button>
                                 <button
                                     className="btn-danger btn-sm"
                                     onClick={() => handleDelete(prompt.id)}
                                 >
                                     <Trash2 size={14} />
-                                    削除
+                                    {text.delete}
                                 </button>
                             </div>
                         )}
@@ -280,7 +345,7 @@ export function PromptManager() {
             {saveSuccess && (
                 <div className="save-success">
                     <CheckCircle2 size={20} />
-                    保存しました
+                    {text.saved}
                 </div>
             )}
         </div>
