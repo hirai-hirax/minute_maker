@@ -38,6 +38,16 @@ AZURE_OPENAI_ENDPOINT=your_endpoint_here
 AZURE_OPENAI_API_KEY=your_api_key_here
 ```
 
+**Ollama（ローカルLLM）使用時:**
+```env
+# Ollama が http://localhost:11434 で稼働していることを確認
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_MODEL=llama3.1   # Ollama に pull 済みのモデル名
+```
+
+> 参考: `ollama serve` でローカル API を起動し、`ollama pull llama3.1` などで利用するモデルを事前に取得してください。
+
 **OSS版Whisper（faster-whisper）使用時:**
 ```env
 WHISPER_PROVIDER=faster-whisper
