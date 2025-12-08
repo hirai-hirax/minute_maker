@@ -1,5 +1,346 @@
 # Minute Maker
 
+Minute Maker is an automated meeting minutes application built with FastAPI and Vite + React + TypeScript. Upload an audio or video file to transcribe, identify speakers, summarize, and download the minutes in Word or Excel format.
+
+## Concept
+
+Minute Maker is designed with **security as the top priority**. It is intended for deployment in private clouds or on-premises environments to satisfy strict enterprise security requirements.
+
+### Core Design Principles
+
+#### 🔒 Secure by Design
+- **No persistent meeting data**: Transcription and summary results are not stored on the server.
+- **Minimized blast radius**: Reduces the risk of confidential information leakage even under cyberattacks.
+- **Automatic cleanup**: Uploaded audio files can be deleted after processing.
+- **Closed-network ready**: Operates even in environments isolated from the internet.
+
+#### 🎯 Reflect Organizational Know-how
+- **Flexible prompt design**: Supports organization-specific minute formats and terminology.
+- **Customizable summaries**: Prompt templates reflect industry practices and internal rules.
+- **Extensibility**: Add or edit prompts to meet department-specific requirements.
+
+#### 🏢 Operable in Private Environments
+- **On-premises friendly**: Runs entirely on self-hosted servers or dedicated clouds.
+- **Selectable LLM providers**: Works with Azure OpenAI, Ollama (local LLM), and more.
+- **Whisper implementation options**: Choose cloud or OSS (faster-whisper) based on your environment.
+
+## App Overview
+
+### Key Features
+- **Audio/Video Transcription**:
+  - High-accuracy transcription and speaker identification with Azure OpenAI (GPT-4o / Whisper)
+  - High-speed transcription with OSS Whisper (faster-whisper)
+- **Speaker Identification**: Automatic identification and speaker registration powered by SpeechBrain
+- **Summary Generation**: Automatic minutes summarization using Azure OpenAI GPT-4o
+- **Minutes Export**: Downloadable in Word / Excel formats
+- **Speaker Management**:
+  - Register and delete speakers
+  - Generate and download speaker embedding files (.npy) from audio files
+- **Navigation**:
+  - Seamlessly switch between Minute Creation, Speaker Management, Prompt Management, and Settings
+  - Preserve work when switching tabs
+
+### Workflow
+1. **File Upload**: Drag & drop MP3/WAV/MP4/M4A files
+2. **Transcription**: Convert audio to text using the selected model (GPT-4o / Whisper)
+3. **Speaker Identification**: Automatically identify registered speakers
+4. **Review & Edit**: View/edit in table format (start/end time, speaker, text)
+5. **Summarize & Format**: Select a summary prompt to generate the minutes
+6. **Download**: Export as Word / Excel
+
+## Screenshots
+
+### Home (Minute Creation)
+A simple, intuitive file upload screen.
+![Home](docs/images/home.png)
+
+### Speaker Management
+Manage registered speakers and generate/download embedding files.
+![Speaker Manager](docs/images/speaker_manager.png)
+
+### Settings
+Adjust LLM providers and models, Whisper options, and more.
+![Settings](docs/images/settings.png)
+
+## Quickstart
+
+### Requirements
+- Python 3.12
+- Node.js 18 or later
+- uv (Python package manager)
+
+See [INSTALLATION.md](INSTALLATION.md) for detailed installation steps.
+
+### Simplified Setup
+
+#### 1. Backend
+```bash
+# Install dependencies
+uv sync
+
+# Set environment variables (create a .env file)
+# AZURE_OPENAI_ENDPOINT=your_endpoint_here
+# AZURE_OPENAI_API_KEY=your_api_key_here
+
+# Download SpeechBrain model (important!)
+uv run python download_model.py
+
+# Start the server
+uv run uvicorn backend.app.main:app --reload
+```
+
+**Using OSS Whisper:**
+```bash
+# Add the following to .env (Azure OpenAI settings not required)
+# WHISPER_PROVIDER=faster-whisper
+# OSS_WHISPER_MODEL=base  # tiny/base/small/medium/large-v2/large-v3
+# OSS_WHISPER_DEVICE=cpu  # or cuda (for GPU)
+
+# Resync dependencies
+uv sync
+
+# Start the server
+uv run uvicorn backend.app.main:app --reload
+```
+
+**Using Ollama (local LLM):**
+```bash
+# Ensure Ollama is running (default: http://localhost:11434)
+ollama serve &
+
+# Pull the required model (example: llama3.1)
+ollama pull llama3.1
+
+# Add the following to .env
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_MODEL=llama3.1
+
+# Start the server
+uv run uvicorn backend.app.main:app --reload
+```
+
+Selecting **Ollama (on-premises)** in the Settings “Provider” option overrides the .env values so each request uses the specified `ollama_base_url` and `ollama_model` (defaults: `http://localhost:11434/v1` / `llama3.1`).
+
+#### 2. Frontend
+```bash
+cd frontend
+npm install
+npm run dev -- --host
+```
+
+The application is available at `http://localhost:5173`.
+
+## Detailed Features
+
+### 1. Transcription
+- **Provider selection**:
+  - **Azure OpenAI**: GPT-4o (with speaker identification) or Whisper (transcription only)
+  - **OSS Whisper**: faster-whisper (transcription only; use SpeechBrain later for speaker identification)
+- **Supported formats**: MP3, WAV, MP4, M4A
+- **Timestamps**: Record start/end times for each segment
+
+### 2. Speaker Management
+- **Speaker registration**:
+  - Register from transcription segments
+  - Register directly from audio files
+- **Speaker identification**:
+  - Automatic detection of registered speakers
+  - Cosine similarity matching (threshold: 0.65)
+- **Embedding file generation**:
+  - Generate and download speaker feature files (.npy) from audio
+  - Generate files without registering them in the system
+
+### 3. Summary Generation
+- **Prompt selection**:
+  - Standard: Balanced summary
+  - Detailed: In-depth analysis including background and context
+  - Concise: Bullet points of key items only
+- **Outputs**:
+  - Meeting summary
+  - Decisions
+  - Action items
+
+## API Endpoints
+
+### Minutes Management
+- `GET /api/minutes` - List minutes
+- `POST /api/minutes` - Create minutes
+- `GET /api/minutes/{id}` - Get minutes detail
+- `GET /api/minutes/{id}/download` - Download minutes
+
+### Audio Processing
+- `POST /api/process_audio` - Audio processing (transcription and speaker identification)
+
+### Speaker Management
+- `GET /api/speakers` - List registered speakers
+- `POST /api/speakers` - Add a speaker
+- `DELETE /api/speakers/{name}` - Delete a speaker
+- `POST /api/register_speaker` - Register a speaker from a segment
+- `POST /api/create_speaker_embedding` - Generate a speaker embedding file
+
+### Summary Generation
+- `GET /api/prompts` - List summary prompts
+- `POST /api/generate_summary` - Generate a summary
+
+See the Swagger UI at `http://localhost:8000/docs` for details.
+
+## Usage
+
+### Navigation Bar
+Use the navigation bar at the top to access each feature screen:
+- **Minute Creation**: Main minutes creation workflow
+- **Speaker Management**: Register/Delete speakers and generate embedding files
+- **Prompt Management**: Manage prompts for summarization
+- **Settings**: Choose LLM providers and Whisper models
+
+### Settings Options
+- **LLM Model**: Choose the model (e.g., GPT-4o) used for minutes generation.
+- **Provider**: Switch providers such as Azure OpenAI or a local LLM.
+- **Whisper Model**: Configure faster-whisper model size and device.
+
+**Important**: Work in each screen is preserved even when switching tabs. You can change settings or register speakers while transcription is running, then return to the “Minute Creation” tab to continue.
+
+### Basic Flow
+1. Select the **Minute Creation** tab (default view)
+2. Drag & drop an audio or video file
+3. Choose a model (GPT-4o / Whisper) (can be preset in Settings)
+4. Click “Start Generation”
+5. Review and edit transcription results when processing completes
+6. Register speakers as needed (also possible in the Speaker Management tab)
+7. Choose a summary prompt and generate the summary
+8. Download the minutes as Word / Excel
+
+## Speaker Registration Methods
+
+#### Method 1: Register from Segments
+1. Click the “+” icon in the transcription table
+2. Enter the speaker name
+3. Click “Register”
+4. The same voice will be identified automatically in future processing
+
+#### Method 2: Register from an Audio File
+1. Go to the “Speaker Management” page
+2. In “New Registration,” choose a speaker name and audio file
+3. Click “Register”
+
+#### Method 3: Generate an Embedding File (without registration)
+1. Go to the “Speaker Management” page
+2. In “Embedding File Generator,” select an audio file
+3. Click “Generate & Download”
+4. A `.npy` file will be downloaded
+5. The file can be used later in another system
+
+## Project Structure
+
+```
+minute_maker/
+├── backend/
+│   ├── app/
+│   │   ├── main.py                    # FastAPI application
+│   │   ├── azure_conversation_generation.py  # Azure OpenAI conversation generation
+│   │   └── tests/                     # Backend tests
+│   ├── data/
+│   │   ├── uploads/                   # Uploaded audio files
+│   │   └── speakers/                  # Registered speaker embedding files
+│   ├── tmp_model/                     # SpeechBrain model files
+│   └── requirements.txt               # Python dependencies
+├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── MinuteGenerator.tsx   # Main minutes generation component
+│   │   │   └── SpeakerManager.tsx    # Speaker management component
+│   │   ├── App.tsx                    # Top-level application
+│   │   └── main.tsx                   # Entry point
+│   ├── public/                        # Static assets
+│   └── package.json                   # Node dependencies
+├── download_model.py                  # SpeechBrain model download script
+├── .env                               # Environment variables (to be created)
+├── AGENTS.md                          # AI development log
+├── INSTALLATION.md                    # Installation guide
+└── README.md                          # This file
+```
+
+## Tech Stack
+
+### Backend
+- **FastAPI**: High-performance Python web framework
+- **Azure OpenAI**: Transcription/Summarization with GPT-4o / Whisper (optional)
+- **faster-whisper**: OSS Whisper for fast transcription (optional)
+- **SpeechBrain**: Speaker recognition (ECAPA-TDNN model)
+- **PyTorch**: Machine learning framework
+- **pydub**: Audio file conversion
+
+### Frontend
+- **React 18**: UI library
+- **TypeScript**: Type safety
+- **Vite**: Fast build tool
+- **Lucide React**: Icon library
+
+## Troubleshooting
+
+### SpeechBrain Model Fails to Load
+1. Run `download_model.py` to download the model.
+2. Ensure the following files exist in `backend/tmp_model/`:
+   - `embedding_model.ckpt` (79.46 MB)
+   - `classifier.ckpt` (5.28 MB)
+   - `label_encoder.txt`
+   - `hyperparams.yaml`
+
+### 404 Errors
+- Confirm both backend and frontend are running.
+- Ensure the `VITE_API_BASE` environment variable is set correctly (default: `http://localhost:8000`).
+
+### Speaker Identification Not Working
+1. Verify the SpeechBrain model is downloaded correctly.
+2. Ensure at least one speaker is registered.
+3. Confirm the audio segment is at least 0.5 seconds long.
+
+See the troubleshooting section in [INSTALLATION.md](INSTALLATION.md) for details.
+
+## Production Build & Deployment
+
+### Frontend
+```bash
+cd frontend
+npm run build
+```
+Build outputs are placed in `frontend/dist/`.
+
+### Backend
+```bash
+# Uvicorn (development)
+uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+
+# Gunicorn + Uvicorn workers (production)
+gunicorn backend.app.main:app -w 4 -k uvicorn.workers.UvicornWorker
+```
+
+## License
+
+This project is released under the MIT License.
+
+This project uses open-source libraries under MIT, Apache 2.0, BSD-3-Clause, and other licenses. See [NOTICE.md](NOTICE.md) for details on third-party libraries.
+
+## Support
+
+- **Development Log**: [AGENTS.md](AGENTS.md)
+- **Installation Guide**: [INSTALLATION.md](INSTALLATION.md)
+- **License Information**: [NOTICE.md](NOTICE.md)
+- **API Documentation**: `http://localhost:8000/docs`
+
+## Acknowledgements
+
+This project uses the following open-source projects:
+- [SpeechBrain](https://speechbrain.github.io/)
+- [Azure OpenAI](https://learn.microsoft.com/azure/ai-services/openai/)
+- [FastAPI](https://fastapi.tiangolo.com/)
+- [React](https://react.dev/)
+
+---
+
+# Minute Maker（日本語）
+
 FastAPI と Vite + React + TypeScript を組み合わせた議事録自動生成アプリです。音声や動画ファイルをアップロードすると、文字起こし・話者識別・要約を行い、Word / Excel 形式の議事録ファイルをダウンロードできます。
 
 ## コンセプト
@@ -27,7 +368,7 @@ Minute Makerは、**セキュリティを最優先**に設計された議事録�
 ## アプリの概要
 
 ### 主要機能
-- **音声・動画の文字起こし**: 
+- **音声・動画の文字起こし**:
   - Azure OpenAI（GPT-4o / Whisper）による高精度な文字起こしと話者識別
   - OSS版Whisper（faster-whisper）による高速な文字起こし
 - **話者識別**: SpeechBrainを使用した自動話者識別と話者登録機能
@@ -134,20 +475,20 @@ npm run dev -- --host
 ## 主要機能の詳細
 
 ### 1. 文字起こし
-- **プロバイダー選択**: 
+- **プロバイダー選択**:
   - **Azure OpenAI**: GPT-4o（話者識別込み）またはWhisper（文字起こしのみ）
   - **OSS Whisper**: faster-whisper（文字起こしのみ、後からSpeechBrainで話者識別）
 - **対応フォーマット**: MP3, WAV, MP4, M4A
 - **タイムスタンプ**: セグメントごとの開始・終了時刻を記録
 
 ### 2. 話者管理
-- **話者登録**: 
+- **話者登録**:
   - 文字起こし結果のセグメントから話者を登録
   - 音声ファイルから直接登録
-- **話者識別**: 
+- **話者識別**:
   - 登録済み話者の自動検出
   - コサイン類似度による照合（閾値: 0.65）
-- **埋め込みファイル生成**: 
+- **埋め込みファイル生成**:
   - 音声ファイルから話者特徴量（.npy）を生成・ダウンロード
   - システムに登録せずファイル生成のみも可能
 
@@ -211,7 +552,7 @@ npm run dev -- --host
 7. 要約プロンプトを選択して要約を生成
 8. Word / Excelで議事録をダウンロード
 
-### 話者登録の方法
+## 話者登録方法
 
 #### 方法1: セグメントから登録
 1. 文字起こし結果テーブルの「＋」アイコンをクリック
@@ -320,7 +661,7 @@ gunicorn backend.app.main:app -w 4 -k uvicorn.workers.UvicornWorker
 
 このプロジェクトは MIT ライセンスの下で公開されています。
 
-このプロジェクトは、MIT、Apache 2.0、BSD-3-Clauseライセンスなどのオープンソースライブラリを使用しています。使用しているサードパーティライブラリの詳細については、[NOTICE.md](NOTICE.md) を参照してください。
+このプロジェクトは、MIT、Apache 2.0、BSD-3-Clause ライセンスなどのオープンソースライブラリを使用しています。使用しているサードパーティライブラリの詳細については、[NOTICE.md](NOTICE.md) を参照してください。
 
 ## サポート
 
