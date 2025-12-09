@@ -8,5 +8,3 @@ frontend/dist/
 *.log
 .DS_Store
 data/
-mojiokoshi6.py
-mojiokoshi7.py

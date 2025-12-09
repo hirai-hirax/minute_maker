@@ -518,7 +518,22 @@ def _transcribe_audio(audio_path: str, original_filename: str, model: str = "gpt
 
 
 def _transcribe_with_azure(audio_path: str, original_filename: str, model: str) -> List[dict]:
-    """Transcribe using Azure OpenAI Whisper"""
+    """Transcribe using Azure OpenAI Whisper
+    
+    Handles files larger than 25MB by splitting them into chunks.
+    """
+    # Check file size (25MB limit)
+    MAX_FILE_SIZE = 25 * 1024 * 1024
+    file_size = os.path.getsize(audio_path)
+    
+    if file_size > MAX_FILE_SIZE:
+        logger.info(f"File size {file_size} bytes exceeds 25MB limit. Splitting audio...")
+        return _transcribe_large_audio_chunked(audio_path, original_filename, model)
+    
+    return _transcribe_single_chunk(audio_path, original_filename, model)
+
+def _transcribe_single_chunk(audio_path: str, original_filename: str, model: str) -> List[dict]:
+    """Transcribe a single audio file (internal helper)"""
     # Determine API version based on model
     api_version = API_VERSION
     if model == "whisper":
@@ -564,6 +579,60 @@ def _transcribe_with_azure(audio_path: str, original_filename: str, model: str) 
         })
         
     return results
+
+def _transcribe_large_audio_chunked(audio_path: str, original_filename: str, model: str) -> List[dict]:
+    """Split large audio into 10-minute chunks and transcribe sequentially"""
+    try:
+        # Load audio using pydub
+        logger.info("Loading audio for splitting (this may take a moment)...")
+        audio = AudioSegment.from_file(audio_path)
+        
+        total_duration_ms = len(audio)
+        CHUNK_DURATION_MS = 10 * 60 * 1000  # 10 minutes
+        num_chunks = (total_duration_ms + CHUNK_DURATION_MS - 1) // CHUNK_DURATION_MS
+        
+        logger.info(f"Audio duration: {total_duration_ms/1000:.1f}s. Splitting into {num_chunks} chunks.")
+        
+        all_segments = []
+        ext = os.path.splitext(original_filename)[1]
+        if not ext:
+            ext = ".mp3"
+            
+        for i in range(num_chunks):
+            start_ms = i * CHUNK_DURATION_MS
+            end_ms = min((i + 1) * CHUNK_DURATION_MS, total_duration_ms)
+            
+            logger.info(f"Processing chunk {i+1}/{num_chunks} ({start_ms/1000:.1f}s - {end_ms/1000:.1f}s)")
+            
+            chunk = audio[start_ms:end_ms]
+            
+            # Export chunk to temporary file
+            # Use mp3 for chunks to save space/bandwidth, or keep original format if possible
+            # mojiokoshi7.py uses mp3 192k for chunks
+            chunk_ext = ".mp3" 
+            chunk_filename = f"chunk_{i}{chunk_ext}"
+            
+            with temp_file_path(b"", chunk_ext) as chunk_path:
+                chunk.export(chunk_path, format="mp3", bitrate="192k")
+                
+                # Transcribe chunk
+                chunk_segments = _transcribe_single_chunk(chunk_path, chunk_filename, model)
+                
+                # Adjust timestamps
+                offset_sec = start_ms / 1000.0
+                for seg in chunk_segments:
+                    seg["start"] += offset_sec
+                    seg["end"] += offset_sec
+                    all_segments.append(seg)
+                    
+        logger.info(f"Completed splitting transcription. Total segments: {len(all_segments)}")
+        return all_segments
+
+    except Exception as e:
+        logger.error(f"Error during chunked transcription: {e}")
+        # Fallback to single chunk attempt if splitting fails (though likely to fail due to size)
+        logger.warning("Falling back to single chunk transcription attempt...")
+        return _transcribe_single_chunk(audio_path, original_filename, model)
 
 
 def _transcribe_with_oss_whisper(audio_path: str) -> List[dict]:
