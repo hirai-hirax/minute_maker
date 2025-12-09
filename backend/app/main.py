@@ -833,8 +833,6 @@ async def register_speaker(
         logger.info(f"Speaker '{safe_name}' registered successfully from audio segment")
         return {"message": f"Speaker {safe_name} registered successfully", "path": str(save_path)}
 
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Registration failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -848,12 +846,7 @@ async def register_speaker(
                 logger.warning(f"Failed to delete temp file {tmp_path}: {e}")
 
 
-@app.get("/api/speakers", summary="List all registered speakers")
-async def list_speakers():
-    speakers = []
-    for spk_file in SPEAKERS_DIR.glob("*.npy"):
-        speakers.append({"name": spk_file.stem, "path": str(spk_file)})
-    return sorted(speakers, key=lambda x: x["name"])
+
 
 
 @app.post("/api/speakers", summary="Add a new speaker from audio or embedding file")
@@ -1390,7 +1383,7 @@ def _generate_docx(data: DownloadRequest) -> BytesIO:
     if data.segments:
         doc.add_heading('文字起こし', level=1)
         
-        # 話者ごとにグループ化（mojiokoshi7.pyと同じロジック）
+        # 話者ごとにグループ化
         merged_segments = []
         current_speaker = None
         current_texts = []

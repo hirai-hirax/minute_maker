@@ -98,6 +98,7 @@ const STRINGS = {
         actionItems: 'アクションアイテム',
         processingAudio: '音声処理中...',
         generatingSummary: 'AIが要約を作成中...',
+
         downloadFailed: (msg: string) => `ダウンロードに失敗しました: ${msg}`,
         identifyComplete: '話者識別が完了しました！',
         identifyFailed: '話者識別に失敗しました。',
@@ -148,6 +149,7 @@ const STRINGS = {
         actionItems: 'Action items',
         processingAudio: 'Processing audio...',
         generatingSummary: 'Generating summary...',
+
         downloadFailed: (msg: string) => `Failed to download: ${msg}`,
         identifyComplete: 'Speaker identification complete!',
         identifyFailed: 'Failed to identify speakers.',
@@ -433,10 +435,8 @@ export function MinuteGenerator() {
             document.body.removeChild(a);
         } catch (err) {
             console.error(err);
-            alert(text.downloadFailed(err instanceof Error ? err.message : 'Unknown error'));
         }
     };
-
     return (
         <div className="minute-generator animate-fade-in">
             {registerModal.isOpen && (
@@ -538,8 +538,8 @@ export function MinuteGenerator() {
                                 }
 
                                 // Navigation Logic
-                                    const isClickable = (() => {
-                                        if (state === 'uploading' || state === 'processing' || state === 'summarizing') return false;
+                                const isClickable = (() => {
+                                    if (state === 'uploading' || state === 'processing' || state === 'summarizing') return false;
 
                                     // Target step check
                                     if (step === 'processing') return true;
@@ -549,13 +549,13 @@ export function MinuteGenerator() {
                                     return false;
                                 })();
 
-                                    const handleStepClick = () => {
-                                        if (!isClickable) return;
-                                        if (step === 'processing') {
-                                            if (confirm(text.restartConfirm)) {
-                                                setState('idle');
-                                                setFile(null);
-                                                setResult(null);
+                                const handleStepClick = () => {
+                                    if (!isClickable) return;
+                                    if (step === 'processing') {
+                                        if (confirm(text.restartConfirm)) {
+                                            setState('idle');
+                                            setFile(null);
+                                            setResult(null);
                                         }
                                         return;
                                     }
@@ -849,16 +849,17 @@ export function MinuteGenerator() {
                             </div>
                         )}
 
-                        {(state === 'processing' || state === 'summarizing') && (
+                        {(state === 'processing' || state === 'uploading') && (
                             <div className="flex flex-col items-center justify-center p-12 text-secondary">
                                 <Loader2 size={48} className="animate-spin mb-4 text-primary" />
-                                <p>{state === 'processing' ? text.processingAudio : text.generatingSummary}</p>
+                                <p>{text.processingAudio}</p>
                             </div>
                         )}
                     </div>
                 )}
             </div>
-        </div >
+        </div>
     );
 }
+
 
